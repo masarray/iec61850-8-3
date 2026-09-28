@@ -75,6 +75,35 @@ struct GetDataDirectoryResponse {
     std::optional<bool> more_follows;
 };
 
+struct DataAttributeDefinition {
+    std::string reference;
+    FunctionalConstraint fc{FunctionalConstraint::ST};
+    DataType type{DataType::Unknown};
+    std::optional<std::int32_t> size;
+    std::vector<DataAttributeDefinition> components;
+};
+
+struct DataObjectDefinition {
+    std::string name;
+    std::optional<std::string> cdc;
+    std::optional<std::int32_t> count;
+    std::vector<DataObjectDefinition> sub_data_definitions;
+    std::vector<DataAttributeDefinition> data_attributes;
+};
+
+struct GetDataDefinitionRequest {
+    std::string data_reference;
+    std::optional<std::string> continue_after;
+};
+
+struct GetDataDefinitionResponse {
+    std::optional<std::string> cdc;
+    std::optional<std::int32_t> count;
+    std::vector<DataObjectDefinition> sub_data_definitions;
+    std::vector<DataAttributeDefinition> data_attributes;
+    std::optional<bool> more_follows;
+};
+
 struct FcdFcdaRef {
     std::string reference;
     FunctionalConstraint fc{FunctionalConstraint::ST};
@@ -82,6 +111,17 @@ struct FcdFcdaRef {
 struct GetDataValuesRequest {
     FcdFcdaRef ref;
     bool include_element_name{false};
+};
+
+struct DataAttributeValue {
+    std::string name;
+    DataType type{DataType::Unknown};
+    DataScalar scalar{};
+    std::vector<DataAttributeValue> children;
+};
+
+struct GetDataValuesResponse {
+    std::vector<DataAttributeValue> data_attribute_values;
 };
 
 struct ServiceError {
@@ -93,7 +133,9 @@ using Payload = std::variant<std::monostate, AssociateRequest, AssociateResponse
     GetLogicalDeviceDirectoryRequest, GetLogicalDeviceDirectoryResponse,
     GetLogicalNodeDirectoryRequest, GetLogicalNodeDirectoryResponse,
     GetDataDirectoryRequest, GetDataDirectoryResponse,
-    GetDataValuesRequest, ServiceError>;
+    GetDataDefinitionRequest, GetDataDefinitionResponse,
+    GetDataValuesRequest, GetDataValuesResponse,
+    ServiceError>;
 
 struct DmsPdu {
     MessageClass message_class{MessageClass::Request};
