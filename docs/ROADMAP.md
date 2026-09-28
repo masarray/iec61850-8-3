@@ -37,8 +37,8 @@ Only after that standalone server is proven do we integrate IEC 61850-8-3 into A
 - [x] canonical TpaaPdu model (typed preliminary subset)
 - [x] BER decoder foundation with strict size/length/depth limits
 - [x] BER encoder foundation
-- [~] associate request/response implemented; release/abort remain
-- [~] starter malformed/truncation tests; corpus expansion remains
+- [x] associate / release / abort lifecycle foundation
+- [~] starter malformed/truncation hardening tests; mutation corpus expansion remains
 - [x] captured Netbeheer vectors as optional oracle evidence
 
 Exit: our codec can reproduce and decode the pinned laboratory message vectors without loading Netbeheer code at runtime.
