@@ -129,8 +129,7 @@ public:
                 if (!ready || !application_ready_) return false;
             }
             if (!connected_.load(std::memory_order_acquire)) return false;
-            const std::string wire(
-                reinterpret_cast<const char*>(payload.data()), payload.size());
+            const ix::IXWebSocketSendData wire(payload);
             const auto info = client_->sendBinary(wire);
             if (!info.success) return false;
 
@@ -152,8 +151,7 @@ public:
         if (clients.empty()) return false;
         const auto& peer = *clients.begin();
         if (!peer) return false;
-        const std::string wire(
-            reinterpret_cast<const char*>(payload.data()), payload.size());
+        const ix::IXWebSocketSendData wire(payload);
         return peer->sendBinary(wire).success;
     }
 
