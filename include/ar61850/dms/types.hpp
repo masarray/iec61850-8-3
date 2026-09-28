@@ -20,6 +20,32 @@ enum class FunctionalConstraint : std::uint8_t {
     ST, MX, SP, SV, CF, DC, SG, SE, SR, OR, BL, EX, LG, CO, Unknown
 };
 
+enum class DataType : std::uint8_t {
+    Structure,
+    Boolean,
+    Int8,
+    Int16,
+    Int24,
+    Int32,
+    Int64,
+    UInt8,
+    UInt16,
+    UInt24,
+    UInt32,
+    Float32,
+    OctetString,
+    VisibleString64,
+    VisibleString129,
+    VisibleString255,
+    BitString,
+    Quality,
+    Timestamp,
+    Enumerated,
+    Check,
+    Unknown
+};
+
+
 enum class Validity : std::uint8_t { Good, Invalid, Reserved, Questionable };
 enum class Source : std::uint8_t { Process, Substituted };
 
