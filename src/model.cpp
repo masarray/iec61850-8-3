@@ -367,6 +367,20 @@ const DataAttributeNode* IedModel::find_data_attribute(std::string_view referenc
     return find_attr(object->attributes, path, index);
 }
 
+const DataSetModel* IedModel::find_data_set(std::string_view reference) const noexcept {
+    const auto dot = reference.find('.');
+    if (dot == std::string_view::npos) return nullptr;
+    const auto* ln = find_logical_node(reference.substr(0, dot));
+    if (!ln) return nullptr;
+    const auto name = reference.substr(dot + 1);
+    const auto it = std::find_if(
+        ln->data_sets.begin(), ln->data_sets.end(),
+        [&](const auto& data_set) {
+            return data_set.name == name || data_set.reference == reference;
+        });
+    return it == ln->data_sets.end() ? nullptr : &*it;
+}
+
 DataAttributeNode* IedModel::find_data_attribute(std::string_view reference) noexcept {
     const auto dot = reference.find('.');
     if (dot == std::string_view::npos) return nullptr;
@@ -449,6 +463,48 @@ IedModel IedModel::make_ft20_reference_model() {
         ens("Beh"), mv("TotW"), mv("TotVAr"), wye("PhV"), del("PPV"), wye("A"),
         mv("AvWPhs"), mv("MaxWPhs"), mv("MinWPhs")
     }};
+
+    lln0.data_sets = {
+        DataSetModel{
+            .name = "DataSetMinMaxAvg",
+            .reference = "LD0/LLN0.DataSetMinMaxAvg",
+            .members = {
+                {"LD0/MMXU1.MinWPhs", FunctionalConstraint::MX},
+                {"LD0/MMXU1.MaxWPhs", FunctionalConstraint::MX},
+                {"LD0/MMXU1.AvWPhs", FunctionalConstraint::MX}
+            }
+        },
+        DataSetModel{
+            .name = "DataSetSetpoints",
+            .reference = "LD0/LLN0.DataSetSetpoints",
+            .members = {
+                {"LD0/DWMX1.SptReas", FunctionalConstraint::ST},
+                {"LD0/DWMX1.WMaxFto.setVal", FunctionalConstraint::SP},
+                {"LD0/DWMX1.WMaxSet.setMag.f", FunctionalConstraint::SP},
+                {"LD0/DWMX1.WMaxSetPct.setMag.f", FunctionalConstraint::SP},
+                {"LD0/DWMX1.WMaxSpt", FunctionalConstraint::MX},
+                {"LD0/DWMX1.WMaxSptPct", FunctionalConstraint::MX},
+                {"LD0/DGEN1.DEROpSt", FunctionalConstraint::ST}
+            }
+        },
+        DataSetModel{
+            .name = "DataSetActualValues",
+            .reference = "LD0/LLN0.DataSetActualValues",
+            .members = {
+                {"LD0/MMXU1.TotW", FunctionalConstraint::MX},
+                {"LD0/MMXU1.TotVAr", FunctionalConstraint::MX},
+                {"LD0/MMXU1.PhV.phsA", FunctionalConstraint::MX},
+                {"LD0/MMXU1.PhV.phsB", FunctionalConstraint::MX},
+                {"LD0/MMXU1.PhV.phsC", FunctionalConstraint::MX},
+                {"LD0/MMXU1.PPV.phsAB", FunctionalConstraint::MX},
+                {"LD0/MMXU1.PPV.phsBC", FunctionalConstraint::MX},
+                {"LD0/MMXU1.PPV.phsCA", FunctionalConstraint::MX},
+                {"LD0/MMXU1.A.phsA", FunctionalConstraint::MX},
+                {"LD0/MMXU1.A.phsB", FunctionalConstraint::MX},
+                {"LD0/MMXU1.A.phsC", FunctionalConstraint::MX}
+            }
+        }
+    };
 
     ld0.logical_nodes = {
         std::move(lln0), std::move(lphd1), std::move(dwmx1),
