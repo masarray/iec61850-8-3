@@ -7,6 +7,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace ar61850::dms {
 
@@ -28,6 +30,10 @@ public:
     IedModel model_snapshot() const { return model_; }
     bool set_float(std::string_view reference, float value) noexcept {
         return model_.set_float(reference, value);
+    }
+    bool set_float_batch(
+        const std::vector<std::pair<std::string, float>>& updates) noexcept {
+        return model_.set_float_batch(updates);
     }
 
 private:
