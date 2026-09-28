@@ -266,9 +266,9 @@ function allSignals(model){
   return out;
 }
 function countModel(m){
-  let ld=0,ln=0,dobj=0,da=0;
-  for(const d of m?.logicalDevices||[]){ld++;for(const n of d.logicalNodes||[]){ln++;const wo=o=>{dobj++;const wa=a=>{da++;for(const c of a.children||[])wa(c)};for(const a of o.dataAttributes||[])wa(a);for(const c of o.dataObjects||[])wo(c)};for(const o of n.dataObjects||[])wo(o)}}
-  return {ld,ln,dobj,da};
+  let ld=0,ln=0,dobj=0,da=0,ds=0;
+  for(const d of m?.logicalDevices||[]){ld++;for(const n of d.logicalNodes||[]){ln++;ds+=(n.dataSets||[]).length;const wo=o=>{dobj++;const wa=a=>{da++;for(const c of a.children||[])wa(c)};for(const a of o.dataAttributes||[])wa(a);for(const c of o.dataObjects||[])wo(c)};for(const o of n.dataObjects||[])wo(o)}}
+  return {ld,ln,dobj,da,ds};
 }
 function treeRow(label,ref,kind,depth,node){
   const row=document.createElement('div');row.className='tree-row';row.dataset.ref=ref;row.style.paddingLeft=(6+depth*13)+'px';
@@ -292,19 +292,31 @@ function renderTree(){
         for(const c of o.dataObjects||[])walk(c,d+1);
       };
       for(const o of ln.dataObjects||[])walk(o,2);
+      for(const ds of ln.dataSets||[]){
+        if(matches(ds.name,ds.ref))root.appendChild(treeRow(ds.name,ds.ref,'DS',2,ds));
+        for(const member of ds.members||[]){
+          if(matches(member.ref,member.ref))root.appendChild(treeRow(member.ref.split('.').pop(),member.ref,'M',3,member));
+        }
+      }
     }
   }
-  const stats=countModel(S.model);$('modelStats').textContent=`${stats.ld} LD · ${stats.ln} LN · ${stats.dobj} DO · ${stats.da} DA`;
+  const stats=countModel(S.model);$('modelStats').textContent=`${stats.ld} LD · ${stats.ln} LN · ${stats.dobj} DO · ${stats.da} DA · ${stats.ds} DS`;
 }
 function detailLeaves(node){
   if(node?.dataAttributes)return flattenAttrs(node.dataAttributes,[]);
   if(node?.children&&node?.type)return flattenAttrs([node],[]);
   return [];
 }
+function renderDataSetDetail(node){
+  const rows=node?.members||[];
+  $('detailRows').innerHTML=rows.length?rows.map((m,i)=>`<tr><td>#${i+1}</td><td><span class="fc">${esc(m.fc||'')}</span></td><td>DataSet member</td><td class="note">—</td><td class="mono">${esc(m.ref||'')}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">DataSet has no members.</td></tr>';
+}
 function selectNode(ref,node,row){
   S.selected={ref,node};document.querySelectorAll('.tree-row.sel').forEach(x=>x.classList.remove('sel'));row?.classList.add('sel');
   $('detailTitle').textContent=node.name||ref;$('detailRef').textContent=ref;
-  const rows=detailLeaves(node);$('detailRows').innerHTML=rows.length?rows.map(a=>`<tr><td>${esc(a.name)}</td><td><span class="fc">${esc(a.fc||'')}</span></td><td>${esc(a.type||'')}</td><td class="value">${esc(scalarText(a.value))}</td><td class="mono">${esc(a.ref||'')}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">Select a data object or data attribute to inspect values.</td></tr>';
+  if(node?.members){renderDataSetDetail(node);return}
+  if(node?.fc&&node?.ref&&!node?.type){$('detailRows').innerHTML=`<tr><td>Member</td><td><span class="fc">${esc(node.fc)}</span></td><td>DataSet member</td><td class="note">—</td><td class="mono">${esc(node.ref)}</td></tr>`;return}
+  const rows=detailLeaves(node);$('detailRows').innerHTML=rows.length?rows.map(a=>`<tr><td>${esc(a.name)}</td><td><span class="fc">${esc(a.fc||'')}</span></td><td>${esc(a.type||'')}</td><td class="value">${esc(scalarText(a.value))}</td><td class="mono">${esc(a.ref||'')}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">Select a data object, attribute, or DataSet to inspect it.</td></tr>';
 }
 function renderSignals(){
   const q=$('signalSearch').value.trim().toLowerCase();
