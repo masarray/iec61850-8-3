@@ -9,9 +9,11 @@
 #include <ixwebsocket/IXWebSocketServer.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace ar61850::dms {
@@ -111,7 +113,20 @@ public:
 
         if (config_.mode == WebSocketMode::ActiveConnect) {
             if (!client_ || !connected_.load(std::memory_order_acquire)) return false;
-            return client_->sendBinary(payload).success;
+            const auto info = client_->sendBinary(payload);
+            if (!info.success) return false;
+
+            // IXWebSocket clients use a non-blocking send path. For a protocol
+            // request API, returning success while bytes still sit only in the
+            // library queue creates a platform-dependent race (notably on
+            // Windows CI). Wait briefly for the library buffer to reach the OS.
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (client_->bufferedAmount() != 0 &&
+                   std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            return client_->bufferedAmount() == 0;
         }
 
         std::shared_ptr<ix::WebSocket> peer;
