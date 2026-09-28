@@ -3,6 +3,62 @@
 namespace ar61850::dms {
 using namespace detail;
 
+namespace {
+
+ber::Bytes encode_da_definition(const DataAttributeDefinition& def) {
+    using namespace ber;
+    Bytes fields;
+    append(fields, explicit_string(0, def.reference));
+    append(fields, explicit_enum(1, static_cast<std::uint8_t>(def.fc)));
+    append(fields, context_explicit(2, encode_type_spec(def)));
+    return sequence(fields);
+}
+
+ber::Bytes encode_da_definition_list(const std::vector<DataAttributeDefinition>& definitions) {
+    using namespace ber;
+    Bytes body;
+    for (const auto& def : definitions) append(body, encode_da_definition(def));
+    return sequence(body);
+}
+
+ber::Bytes encode_do_definition(const DataObjectDefinition& def) {
+    using namespace ber;
+    Bytes fields;
+    append(fields, explicit_string(0, def.name));
+    if (def.cdc) append(fields, explicit_string(1, *def.cdc));
+    if (def.count) append(fields, explicit_integer(2, static_cast<std::uint32_t>(*def.count)));
+    if (!def.sub_data_definitions.empty()) {
+        Bytes children;
+        for (const auto& child : def.sub_data_definitions) append(children, encode_do_definition(child));
+        append(fields, context_explicit(3, sequence(children)));
+    }
+    if (!def.data_attributes.empty()) {
+        append(fields, context_explicit(4, encode_da_definition_list(def.data_attributes)));
+    }
+    return sequence(fields);
+}
+
+ber::Bytes encode_do_definition_list(const std::vector<DataObjectDefinition>& definitions) {
+    using namespace ber;
+    Bytes body;
+    for (const auto& def : definitions) append(body, encode_do_definition(def));
+    return sequence(body);
+}
+
+ber::Bytes encode_data_attribute_values(const std::vector<DataAttributeValue>& values) {
+    using namespace ber;
+    Bytes body;
+    for (const auto& value : values) {
+        Bytes fields;
+        if (!value.name.empty()) append(fields, explicit_string(0, value.name));
+        append(fields, context_explicit(1, encode_data_value(value)));
+        append(body, sequence(fields));
+    }
+    return sequence(body);
+}
+
+} // namespace
+
 ProtocolCodec::ProtocolCodec(ber::Limits limits) : limits_(limits) {}
 
 ber::Bytes ProtocolCodec::encode(const DmsPdu& pdu) const {
@@ -85,6 +141,13 @@ ber::Bytes ProtocolCodec::encode(const DmsPdu& pdu) const {
             if (req.continue_after) append(fields, explicit_string(1, *req.continue_after));
             return encode_request_envelope(pdu, 5, fields);
         }
+        if (pdu.service == ServiceKind::GetDataDefinition) {
+            const auto& req = std::get<GetDataDefinitionRequest>(pdu.payload);
+            Bytes fields;
+            append(fields, explicit_string(0, req.data_reference));
+            if (req.continue_after) append(fields, explicit_string(1, *req.continue_after));
+            return encode_request_envelope(pdu, 6, fields);
+        }
         if (pdu.service == ServiceKind::GetDataValues) {
             const auto& req = std::get<GetDataValuesRequest>(pdu.payload);
             Bytes fcd;
@@ -134,6 +197,26 @@ ber::Bytes ProtocolCodec::encode(const DmsPdu& pdu) const {
             append(fields, context_explicit(0, list));
             if (rsp.more_follows) append(fields, explicit_bool(1, *rsp.more_follows));
             return encode_response_envelope(pdu, 2, fields);
+        }
+        if (pdu.service == ServiceKind::GetDataDefinition) {
+            const auto& rsp = std::get<GetDataDefinitionResponse>(pdu.payload);
+            Bytes fields;
+            if (rsp.cdc) append(fields, explicit_string(0, *rsp.cdc));
+            if (rsp.count) append(fields, explicit_integer(1, static_cast<std::uint32_t>(*rsp.count)));
+            if (!rsp.sub_data_definitions.empty()) {
+                append(fields, context_explicit(2, encode_do_definition_list(rsp.sub_data_definitions)));
+            }
+            if (!rsp.data_attributes.empty()) {
+                append(fields, context_explicit(3, encode_da_definition_list(rsp.data_attributes)));
+            }
+            if (rsp.more_follows) append(fields, explicit_bool(4, *rsp.more_follows));
+            return encode_response_envelope(pdu, 6, fields);
+        }
+        if (pdu.service == ServiceKind::GetDataValues) {
+            const auto& rsp = std::get<GetDataValuesResponse>(pdu.payload);
+            Bytes fields;
+            append(fields, context_explicit(0, encode_data_attribute_values(rsp.data_attribute_values)));
+            return encode_response_envelope(pdu, 3, fields);
         }
         if (pdu.service == ServiceKind::GetDataDirectory) {
             const auto& rsp = std::get<GetDataDirectoryResponse>(pdu.payload);
