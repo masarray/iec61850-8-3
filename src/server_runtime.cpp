@@ -1,6 +1,7 @@
 #include "ar61850/dms/server_runtime.hpp"
 
 #include <exception>
+#include <future>
 #include <stdexcept>
 #include <utility>
 
@@ -57,6 +58,53 @@ void ServerRuntime::stop() noexcept {
     service_worker_.stop();
     transport_connected_.store(false, std::memory_order_release);
     emit(RuntimeEvent::Kind::Stopped);
+}
+
+std::optional<IedModel> ServerRuntime::model_snapshot(std::chrono::milliseconds timeout) {
+    if (!running()) return std::nullopt;
+
+    auto promise = std::make_shared<std::promise<IedModel>>();
+    auto future = promise->get_future();
+    const bool accepted = service_worker_.post([this, promise] {
+        try {
+            promise->set_value(core_.model_snapshot());
+        } catch (...) {
+            promise->set_exception(std::current_exception());
+        }
+    });
+    if (!accepted) return std::nullopt;
+    if (future.wait_for(timeout) != std::future_status::ready) return std::nullopt;
+    try {
+        return future.get();
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+bool ServerRuntime::set_float(
+    std::string_view reference,
+    float value,
+    std::chrono::milliseconds timeout) {
+    if (!running()) return false;
+
+    auto promise = std::make_shared<std::promise<bool>>();
+    auto future = promise->get_future();
+    const std::string owned_reference(reference);
+    const bool accepted = service_worker_.post(
+        [this, promise, owned_reference, value] {
+            try {
+                promise->set_value(core_.set_float(owned_reference, value));
+            } catch (...) {
+                promise->set_exception(std::current_exception());
+            }
+        });
+    if (!accepted) return false;
+    if (future.wait_for(timeout) != std::future_status::ready) return false;
+    try {
+        return future.get();
+    } catch (...) {
+        return false;
+    }
 }
 
 void ServerRuntime::on_receive(Bytes payload) {
