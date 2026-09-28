@@ -117,6 +117,65 @@ int main() {
     assert(directory.logical_devices.size() == 1);
     assert(directory.logical_devices[0] == "LD0");
 
+    DmsPdu definition_request;
+    definition_request.message_class = MessageClass::Request;
+    definition_request.service = ServiceKind::GetDataDefinition;
+    definition_request.associate_id = "id_cp1";
+    definition_request.invoke_id = 1;
+    definition_request.payload = GetDataDefinitionRequest{
+        .data_reference = "LD0/MMXU1.TotW"
+    };
+    assert(client.send(codec.encode(definition_request)));
+
+    Bytes definition_wire;
+    {
+        std::unique_lock lock(mutex);
+        const bool ready = cv.wait_for(
+            lock, std::chrono::seconds(10), [&] { return received.size() >= 3; });
+        assert(ready);
+        definition_wire = received[2];
+    }
+
+    const auto definition_response = codec.decode(definition_wire);
+    assert(definition_response.service == ServiceKind::GetDataDefinition);
+    const auto& definition =
+        std::get<GetDataDefinitionResponse>(definition_response.payload);
+    assert(definition.cdc && *definition.cdc == "MV");
+    assert(definition.data_attributes.size() == 4);
+
+    DmsPdu value_request;
+    value_request.message_class = MessageClass::Request;
+    value_request.service = ServiceKind::GetDataValues;
+    value_request.associate_id = "id_cp1";
+    value_request.invoke_id = 2;
+    value_request.payload = GetDataValuesRequest{
+        .ref = FcdFcdaRef{
+            .reference = "LD0/MMXU1.TotW",
+            .fc = FunctionalConstraint::MX
+        },
+        .include_element_name = true
+    };
+    assert(client.send(codec.encode(value_request)));
+
+    Bytes value_wire;
+    {
+        std::unique_lock lock(mutex);
+        const bool ready = cv.wait_for(
+            lock, std::chrono::seconds(10), [&] { return received.size() >= 4; });
+        assert(ready);
+        value_wire = received[3];
+    }
+
+    const auto value_response = codec.decode(value_wire);
+    assert(value_response.service == ServiceKind::GetDataValues);
+    const auto& live =
+        std::get<GetDataValuesResponse>(value_response.payload);
+    assert(live.data_attribute_values.size() == 3);
+    assert(live.data_attribute_values[0].name == "mag");
+    assert(live.data_attribute_values[0].children.size() == 1);
+    assert(std::get<float>(
+        live.data_attribute_values[0].children[0].scalar) == 10.0F);
+
     assert(server.transport_connected());
     assert(server.dropped_messages() == 0);
 
