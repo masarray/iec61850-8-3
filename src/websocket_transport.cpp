@@ -113,7 +113,9 @@ public:
 
         if (config_.mode == WebSocketMode::ActiveConnect) {
             if (!client_ || !connected_.load(std::memory_order_acquire)) return false;
-            const auto info = client_->sendBinary(payload);
+            const std::string wire(
+                reinterpret_cast<const char*>(payload.data()), payload.size());
+            const auto info = client_->sendBinary(wire);
             if (!info.success) return false;
 
             // IXWebSocket clients use a non-blocking send path. For a protocol
@@ -135,7 +137,9 @@ public:
             peer = passive_peer_.lock();
         }
         if (!peer) return false;
-        return peer->sendBinary(payload).success;
+        const std::string wire(
+            reinterpret_cast<const char*>(payload.data()), payload.size());
+        return peer->sendBinary(wire).success;
     }
 
 private:
