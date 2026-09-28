@@ -59,7 +59,37 @@ int main() {
     assert(health);
     assert(health->statusCode == 200);
     assert(health->body.find("\"runtimeRunning\":true") != std::string::npos);
+    assert(health->body.find("\"transportActive\":true") != std::string::npos);
     assert(health->body.find("\"transportConnected\":true") != std::string::npos);
+
+    auto page = client.get(control.base_uri() + "/", args);
+    assert(page);
+    assert(page->statusCode == 200);
+    assert(page->body.find("AR61850 DMS Workbench") != std::string::npos);
+    assert(page->body.find("Protocol Inspector") == std::string::npos ||
+           page->body.find("Inspector") != std::string::npos);
+
+    auto stop_transport = client.post(
+        control.base_uri() + "/api/runtime/transport/stop",
+        std::string{},
+        args);
+    assert(stop_transport);
+    assert(stop_transport->statusCode == 200);
+
+    health = client.get(control.base_uri() + "/api/health", args);
+    assert(health);
+    assert(health->body.find("\"transportActive\":false") != std::string::npos);
+
+    auto start_transport = client.post(
+        control.base_uri() + "/api/runtime/transport/start",
+        std::string{},
+        args);
+    assert(start_transport);
+    assert(start_transport->statusCode == 200);
+
+    health = client.get(control.base_uri() + "/api/health", args);
+    assert(health);
+    assert(health->body.find("\"transportActive\":true") != std::string::npos);
 
     auto model = client.get(control.base_uri() + "/api/model", args);
     assert(model);
@@ -82,10 +112,17 @@ int main() {
     assert(attr);
     assert(std::get<float>(attr->value) == 42.5F);
 
-    auto traces = client.get(control.base_uri() + "/api/traces", args);
+    auto traces = client.get(control.base_uri() + "/api/traces?after=0&limit=32", args);
     assert(traces);
     assert(traces->statusCode == 200);
     assert(!traces->body.empty() && traces->body.front() == '[');
+
+    auto clear = client.post(
+        control.base_uri() + "/api/traces/clear",
+        std::string{},
+        args);
+    assert(clear);
+    assert(clear->statusCode == 200);
 
     control.stop();
     runtime.stop();
