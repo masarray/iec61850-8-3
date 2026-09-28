@@ -4,7 +4,9 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <iostream>
 #include <memory>
+#include <thread>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -33,9 +35,15 @@ int main() {
     const auto port = server_wire->config().port;
     assert(port != 0);
 
+    // Windows CI occasionally schedules the client before IXWebSocket's
+    // accept loop has entered its run state even though listen() has bound.
+    // Give the background accept thread a small deterministic startup window.
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
     std::mutex mutex;
     std::condition_variable cv;
     bool client_connected = false;
+    std::string last_state_detail;
     std::vector<Bytes> received;
 
     WebSocketTransportConfig client_ws;
@@ -46,10 +54,11 @@ int main() {
     client_ws.automatic_reconnect = true;
 
     WebSocketTransport client{client_ws};
-    client.set_state_handler([&](bool connected, std::string_view) {
+    client.set_state_handler([&](bool connected, std::string_view detail) {
         {
             std::scoped_lock lock(mutex);
             client_connected = connected;
+            last_state_detail.assign(detail);
         }
         cv.notify_all();
     });
@@ -65,8 +74,12 @@ int main() {
     {
         std::unique_lock lock(mutex);
         const bool connected = cv.wait_for(
-            lock, std::chrono::seconds(10), [&] { return client_connected; });
-        assert(connected);
+            lock, std::chrono::seconds(15), [&] { return client_connected; });
+        if (!connected) {
+            std::cerr << "WebSocket client failed to connect: "
+                      << last_state_detail << std::endl;
+            return 2;
+        }
     }
 
     ProtocolCodec codec;
