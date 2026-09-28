@@ -32,6 +32,29 @@ ber::Bytes ProtocolCodec::encode(const DmsPdu& pdu) const {
         return context_explicit(0, service);
     }
 
+    if (pdu.message_class == MessageClass::Association &&
+        (pdu.service == ServiceKind::Release || pdu.service == ServiceKind::Abort)) {
+        if (!pdu.invoke_id || pdu.associate_id.empty()) {
+            throw Error("DMS BER: release/abort requires invokeId and associateId");
+        }
+
+        Bytes fields;
+        append(fields, context_implicit_integer(0, *pdu.invoke_id));
+        append(fields, explicit_string(1, pdu.associate_id));
+        const auto seq = sequence(fields);
+
+        std::uint32_t service_tag = 0;
+        if (pdu.service == ServiceKind::Release) {
+            service_tag = (pdu.payload.index() == 0) ? 2U : 3U;
+        } else {
+            service_tag = (pdu.payload.index() == 0) ? 4U : 5U;
+        }
+
+        const auto lifecycle = context_explicit(service_tag, seq);
+        const auto service = context_explicit(1, lifecycle);
+        return context_explicit(0, service);
+    }
+
     if (pdu.message_class == MessageClass::Request) {
         if (pdu.service == ServiceKind::GetServerDirectory) {
             const auto& req = std::get<GetServerDirectoryRequest>(pdu.payload);
