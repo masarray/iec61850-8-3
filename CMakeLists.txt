@@ -7,7 +7,6 @@ option(AR61850_DMS_BUILD_APPS "Build AR61850 DMS command-line applications" ON)
 option(AR61850_DMS_ENABLE_WEBSOCKET "Build native WebSocket transport" ON)
 
 add_library(ar61850_dms STATIC
-    src/control_plane.cpp
     src/ber.cpp
     src/model.cpp
     src/protocol_decode.cpp
@@ -49,7 +48,10 @@ if(AR61850_DMS_ENABLE_WEBSOCKET)
   )
   FetchContent_MakeAvailable(ixwebsocket)
 
-  target_sources(ar61850_dms PRIVATE src/websocket_transport.cpp)
+  target_sources(ar61850_dms PRIVATE
+    src/control_plane.cpp
+    src/websocket_transport.cpp
+  )
   target_link_libraries(ar61850_dms PRIVATE ixwebsocket::ixwebsocket)
   target_compile_definitions(ar61850_dms PUBLIC AR61850_DMS_HAS_WEBSOCKET=1)
 endif()
