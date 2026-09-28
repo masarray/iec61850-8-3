@@ -13,22 +13,25 @@
 using namespace ar61850::dms;
 
 int main() {
-    constexpr std::uint16_t port = 18765;
-
     WebSocketTransportConfig server_ws;
     server_ws.mode = WebSocketMode::PassiveListen;
     server_ws.host = "127.0.0.1";
-    server_ws.port = port;
+    server_ws.port = 0;
     server_ws.access_point = "cp1";
     server_ws.automatic_reconnect = false;
 
+    auto server_transport = std::make_unique<WebSocketTransport>(server_ws);
+    auto* server_wire = server_transport.get();
+
     ServerRuntime server{
         ServerCore{IedModel::make_ft20_reference_model()},
-        std::make_unique<WebSocketTransport>(server_ws),
+        std::move(server_transport),
         64,
         128
     };
     server.start();
+    const auto port = server_wire->config().port;
+    assert(port != 0);
 
     std::mutex mutex;
     std::condition_variable cv;
