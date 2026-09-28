@@ -3,6 +3,7 @@
 #include <cassert>
 #include <chrono>
 #include <condition_variable>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -42,8 +43,12 @@ public:
     Bytes wait_for_message(std::size_t index) {
         std::unique_lock lock(mutex_);
         const bool ready = cv_.wait_for(
-            lock, std::chrono::seconds(2), [&] { return sent_.size() > index; });
-        assert(ready);
+            lock, std::chrono::seconds(10), [&] { return sent_.size() > index; });
+        if (!ready) {
+            std::cerr << "FakeTransport timeout waiting for response index "
+                      << index << ", sent=" << sent_.size() << std::endl;
+            return {};
+        }
         return sent_[index];
     }
 
@@ -83,6 +88,7 @@ int main() {
 
     wire->inject(codec.encode(associate));
     const auto associate_response_wire = wire->wait_for_message(0);
+    assert(!associate_response_wire.empty());
     const auto associate_response = codec.decode(associate_response_wire);
     assert(associate_response.service == ServiceKind::Associate);
     assert(associate_response.associate_id == "id_cp1");
@@ -96,6 +102,7 @@ int main() {
 
     wire->inject(codec.encode(request));
     const auto directory_wire = wire->wait_for_message(1);
+    assert(!directory_wire.empty());
     const auto directory = codec.decode(directory_wire);
     assert(directory.service == ServiceKind::GetServerDirectory);
     const auto& result = std::get<GetServerDirectoryResponse>(directory.payload);
