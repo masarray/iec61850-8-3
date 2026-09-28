@@ -82,6 +82,23 @@ int main() {
         }
     }
 
+    auto wait_received = [&](std::size_t count, const char* stage) -> bool {
+        std::unique_lock lock(mutex);
+        const bool ready = cv.wait_for(
+            lock, std::chrono::seconds(10), [&] { return received.size() >= count; });
+        if (!ready) {
+            std::cerr << "WebSocket timeout at " << stage
+                      << ": received=" << received.size()
+                      << " client_connected=" << (client_connected ? "true" : "false")
+                      << " state='" << last_state_detail << "'"
+                      << " server_transport_connected="
+                      << (server.transport_connected() ? "true" : "false")
+                      << " traces=" << server.trace_snapshot().size()
+                      << std::endl;
+        }
+        return ready;
+    };
+
     ProtocolCodec codec;
 
     DmsPdu associate;
@@ -94,11 +111,9 @@ int main() {
     assert(client.send(codec.encode(associate)));
 
     Bytes associate_wire;
+    if (!wait_received(1, "associate response")) return 11;
     {
-        std::unique_lock lock(mutex);
-        const bool ready = cv.wait_for(
-            lock, std::chrono::seconds(10), [&] { return received.size() >= 1; });
-        assert(ready);
+        std::scoped_lock lock(mutex);
         associate_wire = received[0];
     }
 
@@ -115,11 +130,9 @@ int main() {
     assert(client.send(codec.encode(directory_request)));
 
     Bytes directory_wire;
+    if (!wait_received(2, "server-directory response")) return 12;
     {
-        std::unique_lock lock(mutex);
-        const bool ready = cv.wait_for(
-            lock, std::chrono::seconds(10), [&] { return received.size() >= 2; });
-        assert(ready);
+        std::scoped_lock lock(mutex);
         directory_wire = received[1];
     }
 
@@ -141,11 +154,9 @@ int main() {
     assert(client.send(codec.encode(definition_request)));
 
     Bytes definition_wire;
+    if (!wait_received(3, "data-definition response")) return 13;
     {
-        std::unique_lock lock(mutex);
-        const bool ready = cv.wait_for(
-            lock, std::chrono::seconds(10), [&] { return received.size() >= 3; });
-        assert(ready);
+        std::scoped_lock lock(mutex);
         definition_wire = received[2];
     }
 
@@ -171,11 +182,9 @@ int main() {
     assert(client.send(codec.encode(value_request)));
 
     Bytes value_wire;
+    if (!wait_received(4, "data-values response")) return 14;
     {
-        std::unique_lock lock(mutex);
-        const bool ready = cv.wait_for(
-            lock, std::chrono::seconds(10), [&] { return received.size() >= 4; });
-        assert(ready);
+        std::scoped_lock lock(mutex);
         value_wire = received[3];
     }
 
