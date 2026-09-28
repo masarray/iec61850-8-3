@@ -112,6 +112,20 @@ int main() {
     assert(attr);
     assert(std::get<float>(attr->value) == 42.5F);
 
+    auto scenario = client.post(
+        control.base_uri() + "/api/scenarios/load-step",
+        std::string{},
+        args);
+    assert(scenario);
+    assert(scenario->statusCode == 200);
+    assert(scenario->body.find("\"scenario\":\"load-step\"") != std::string::npos);
+
+    const auto scenario_snapshot = runtime.model_snapshot();
+    assert(scenario_snapshot);
+    attr = scenario_snapshot->find_data_attribute("LD0/MMXU1.TotW.mag.f");
+    assert(attr);
+    assert(std::get<float>(attr->value) == 125.0F);
+
     auto traces = client.get(control.base_uri() + "/api/traces?after=0&limit=32", args);
     assert(traces);
     assert(traces->statusCode == 200);
