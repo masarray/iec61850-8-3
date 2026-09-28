@@ -38,6 +38,9 @@ void print_usage(const char* argv0) {
         << "  --host HOST               bind/remote host (default 127.0.0.1)\n"
         << "  --port PORT               bind/remote port (default 8765)\n"
         << "  --access-point NAME       WebSocket path / access point (default cp1)\n"
+        << "  --http-host HOST          local control-plane host (default 127.0.0.1)\n"
+        << "  --http-port PORT          local control-plane port (default 8080)\n"
+        << "  --no-control-plane        disable local HTTP control plane\n"
         << "  --no-reconnect            disable reconnect in connect mode\n"
         << "  --help                    show this help\n";
 }
@@ -52,6 +55,8 @@ std::uint16_t parse_port(const std::string& text) {
 int main(int argc, char** argv) {
     try {
         WebSocketTransportConfig transport_config;
+        ControlPlaneConfig control_config;
+        bool control_enabled = true;
 
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
@@ -78,6 +83,12 @@ int main(int argc, char** argv) {
                 transport_config.port = parse_port(require_value("--port"));
             } else if (arg == "--access-point") {
                 transport_config.access_point = require_value("--access-point");
+            } else if (arg == "--http-host") {
+                control_config.host = require_value("--http-host");
+            } else if (arg == "--http-port") {
+                control_config.port = parse_port(require_value("--http-port"));
+            } else if (arg == "--no-control-plane") {
+                control_enabled = false;
             } else if (arg == "--no-reconnect") {
                 transport_config.automatic_reconnect = false;
             } else {
@@ -106,11 +117,19 @@ int main(int argc, char** argv) {
 
         runtime.start();
 
+        std::unique_ptr<ControlPlane> control_plane;
+        if (control_enabled) {
+            control_plane = std::make_unique<ControlPlane>(runtime, control_config);
+            control_plane->start();
+        }
+
         std::cout
             << "AR61850 native IEC 61850-8-3 laboratory server\n"
             << "  endpoint : " << endpoint << "\n"
             << "  profile  : iec61850-tpaa-ber-v1\n"
             << "  model    : IED1 / LD0\n"
+            << "  control  : "
+            << (control_plane ? control_plane->base_uri() : std::string("disabled")) << "\n"
             << "  runtime  : native C++20, no Netbeheer/Python dependency\n"
             << "Press Ctrl+C to stop.\n";
 
@@ -118,6 +137,7 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
+        if (control_plane) control_plane->stop();
         runtime.stop();
         return 0;
     } catch (const std::exception& ex) {
