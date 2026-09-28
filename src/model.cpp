@@ -381,6 +381,48 @@ const DataSetModel* IedModel::find_data_set(std::string_view reference) const no
     return it == ln->data_sets.end() ? nullptr : &*it;
 }
 
+
+const ReportControlState* IedModel::find_report_control(
+    std::string_view reference) const noexcept {
+    const auto dot = reference.find('.');
+    if (dot == std::string_view::npos) return nullptr;
+    const auto* ln = find_logical_node(reference.substr(0, dot));
+    if (!ln) return nullptr;
+    const auto name = reference.substr(dot + 1);
+    const auto it = std::find_if(
+        ln->report_controls.begin(), ln->report_controls.end(),
+        [&](const auto& rcb) {
+            return rcb.reference.value == reference ||
+                rcb.reference.value == std::string(reference.substr(0, dot + 1)) + std::string(name);
+        });
+    return it == ln->report_controls.end() ? nullptr : &*it;
+}
+
+ReportControlState* IedModel::find_report_control(
+    std::string_view reference) noexcept {
+    const auto dot = reference.find('.');
+    const auto slash = reference.find('/');
+    if (dot == std::string_view::npos ||
+        slash == std::string_view::npos || slash > dot) return nullptr;
+    const auto ld_name = reference.substr(0, slash);
+    const auto ln_name = reference.substr(slash + 1, dot - slash - 1);
+
+    auto ld = std::find_if(
+        logical_devices_.begin(), logical_devices_.end(),
+        [&](const auto& item) { return item.name == ld_name; });
+    if (ld == logical_devices_.end()) return nullptr;
+
+    auto ln = std::find_if(
+        ld->logical_nodes.begin(), ld->logical_nodes.end(),
+        [&](const auto& item) { return item.name == ln_name; });
+    if (ln == ld->logical_nodes.end()) return nullptr;
+
+    const auto it = std::find_if(
+        ln->report_controls.begin(), ln->report_controls.end(),
+        [&](const auto& rcb) { return rcb.reference.value == reference; });
+    return it == ln->report_controls.end() ? nullptr : &*it;
+}
+
 DataAttributeNode* IedModel::find_data_attribute(std::string_view reference) noexcept {
     const auto dot = reference.find('.');
     if (dot == std::string_view::npos) return nullptr;
@@ -502,6 +544,73 @@ IedModel IedModel::make_ft20_reference_model() {
                 {"LD0/MMXU1.A.phsA", FunctionalConstraint::MX},
                 {"LD0/MMXU1.A.phsB", FunctionalConstraint::MX},
                 {"LD0/MMXU1.A.phsC", FunctionalConstraint::MX}
+            }
+        }
+    };
+
+    lln0.report_controls = {
+        ReportControlState{
+            .reference = ObjectReference{"LD0/LLN0.rcbMinMaxAvg"},
+            .report_id = "MinMaxAvg",
+            .enabled = false,
+            .buffered = true,
+            .data_set = "LD0/LLN0.DataSetMinMaxAvg",
+            .conf_rev = 1,
+            .buffer_time_ms = 0,
+            .integrity_period_ms = 2000,
+            .triggers = TriggerOptions{
+                .integrity = true
+            },
+            .optional_fields = ReportOptionalFields{
+                .sequence_number = false,
+                .timestamp = true,
+                .data_set = true,
+                .buffer_overflow = true,
+                .config_revision = false,
+                .entry_id = true,
+                .data_reference = false,
+                .reason_code = false
+            },
+            .entry_id = Bytes(8, 0),
+            .time_of_entry = deterministic_timestamp()
+        },
+        ReportControlState{
+            .reference = ObjectReference{"LD0/LLN0.rcbSetpoints"},
+            .report_id = "Setpoints",
+            .enabled = false,
+            .buffered = false,
+            .data_set = "LD0/LLN0.DataSetSetpoints",
+            .conf_rev = 1,
+            .buffer_time_ms = 100,
+            .integrity_period_ms = 1000,
+            .triggers = TriggerOptions{
+                .data_change = true,
+                .integrity = true,
+                .general_interrogation = true
+            },
+            .optional_fields = ReportOptionalFields{
+                .timestamp = true,
+                .reason_code = true
+            }
+        },
+        ReportControlState{
+            .reference = ObjectReference{"LD0/LLN0.rcbActualValues"},
+            .report_id = "DataSetActualValues",
+            .enabled = false,
+            .buffered = false,
+            .data_set = "LD0/LLN0.DataSetActualValues",
+            .conf_rev = 1,
+            .buffer_time_ms = 1000,
+            .integrity_period_ms = 1000,
+            .triggers = TriggerOptions{
+                .data_change = true,
+                .quality_change = true,
+                .general_interrogation = true
+            },
+            .optional_fields = ReportOptionalFields{
+                .timestamp = true,
+                .config_revision = true,
+                .reason_code = true
             }
         }
     };
