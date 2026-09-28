@@ -137,7 +137,11 @@ int main() {
         .called_ap = std::string("cp1"),
         .max_message_size = 65000
     };
-    assert(client.send(codec.encode(associate)));
+    if (!client.send(codec.encode(associate))) {
+        std::cerr << "WebSocket client failed to send associate request; state='"
+                  << last_state_detail << "' buffered transport not ready" << std::endl;
+        return 10;
+    }
 
     Bytes associate_wire;
     if (!wait_received(1, "associate response")) return 11;
@@ -156,7 +160,10 @@ int main() {
     directory_request.associate_id = "id_cp1";
     directory_request.invoke_id = 0;
     directory_request.payload = GetServerDirectoryRequest{};
-    assert(client.send(codec.encode(directory_request)));
+    if (!client.send(codec.encode(directory_request))) {
+        std::cerr << "WebSocket client failed to send server-directory request" << std::endl;
+        return 20;
+    }
 
     Bytes directory_wire;
     if (!wait_received(2, "server-directory response")) return 12;
@@ -180,7 +187,10 @@ int main() {
     definition_request.payload = GetDataDefinitionRequest{
         .data_reference = "LD0/MMXU1.TotW"
     };
-    assert(client.send(codec.encode(definition_request)));
+    if (!client.send(codec.encode(definition_request))) {
+        std::cerr << "WebSocket client failed to send data-definition request" << std::endl;
+        return 30;
+    }
 
     Bytes definition_wire;
     if (!wait_received(3, "data-definition response")) return 13;
@@ -208,7 +218,10 @@ int main() {
         },
         .include_element_name = true
     };
-    assert(client.send(codec.encode(value_request)));
+    if (!client.send(codec.encode(value_request))) {
+        std::cerr << "WebSocket client failed to send data-values request" << std::endl;
+        return 40;
+    }
 
     Bytes value_wire;
     if (!wait_received(4, "data-values response")) return 14;
