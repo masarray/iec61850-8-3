@@ -240,6 +240,30 @@ void append_objects_json(
     out << ']';
 }
 
+void append_data_sets_json(
+    std::ostringstream& out,
+    const std::vector<DataSetModel>& data_sets) {
+    out << '[';
+    bool first_data_set = true;
+    for (const auto& data_set : data_sets) {
+        if (!first_data_set) out << ',';
+        first_data_set = false;
+        out << "{\"name\":\"" << json_escape(data_set.name)
+            << "\",\"ref\":\"" << json_escape(data_set.reference)
+            << "\",\"deletable\":" << (data_set.deletable ? "true" : "false")
+            << ",\"members\":[";
+        bool first_member = true;
+        for (const auto& member : data_set.members) {
+            if (!first_member) out << ',';
+            first_member = false;
+            out << "{\"ref\":\"" << json_escape(member.reference)
+                << "\",\"fc\":\"" << fc_name(member.fc) << "\"}";
+        }
+        out << "]}";
+    }
+    out << ']';
+}
+
 std::string model_json(const IedModel& model) {
     std::ostringstream out;
     out << "{\"ied\":\"" << json_escape(model.ied_name()) << "\",\"logicalDevices\":[";
@@ -257,6 +281,8 @@ std::string model_json(const IedModel& model) {
                 << "\",\"ref\":\"" << json_escape(ln_ref)
                 << "\",\"dataObjects\":";
             append_objects_json(out, ln.data_objects, ln_ref);
+            out << ",\"dataSets\":";
+            append_data_sets_json(out, ln.data_sets);
             out << '}';
         }
         out << "]}";
