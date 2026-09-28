@@ -21,6 +21,7 @@ public:
     explicit ServerCore(IedModel model, ServerConfig config = {});
 
     std::optional<ber::Bytes> handle(std::span<const std::uint8_t> wire_message);
+    std::optional<DmsPdu> handle_pdu(const DmsPdu& request);
     bool associated() const noexcept { return associated_; }
     const std::string& associate_id() const noexcept { return associate_id_; }
     const IedModel& model() const noexcept { return model_; }
