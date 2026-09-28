@@ -220,7 +220,7 @@ void append_objects_json(
             << "\",\"ref\":\"" << json_escape(object_ref)
             << "\",\"cdc\":\"" << json_escape(object.cdc)
             << "\",\"dataObjects\":";
-        append_objects_json(out, object.children, ln_ref);
+        append_objects_json(out, object.children, object_ref);
         out << ",\"dataAttributes\":";
         append_attributes_json(out, object.attributes, object_ref);
         out << '}';
