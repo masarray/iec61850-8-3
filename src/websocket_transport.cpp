@@ -100,6 +100,10 @@ public:
         } catch (...) {
         }
 
+        {
+            std::scoped_lock lock(readiness_mutex_);
+            send_ready_after_ = {};
+        }
         connected_.store(false, std::memory_order_release);
     }
 
@@ -109,6 +113,16 @@ public:
 
         if (config_.mode == WebSocketMode::ActiveConnect) {
             if (!client_ || !connected_.load(std::memory_order_acquire)) return false;
+            std::chrono::steady_clock::time_point ready_after;
+            {
+                std::scoped_lock lock(readiness_mutex_);
+                ready_after = send_ready_after_;
+            }
+            if (ready_after != std::chrono::steady_clock::time_point{} &&
+                std::chrono::steady_clock::now() < ready_after) {
+                std::this_thread::sleep_until(ready_after);
+            }
+            if (!connected_.load(std::memory_order_acquire)) return false;
             const std::string wire(
                 reinterpret_cast<const char*>(payload.data()), payload.size());
             const auto info = client_->sendBinary(wire);
@@ -189,14 +203,27 @@ private:
 
             switch (message->type) {
             case ix::WebSocketMessageType::Open:
+                {
+                    std::scoped_lock lock(readiness_mutex_);
+                    send_ready_after_ = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(config_.initial_send_settle_ms);
+                }
                 connected_.store(true, std::memory_order_release);
                 emit_state(true, "connected " + endpoint_uri());
                 break;
             case ix::WebSocketMessageType::Close:
+                {
+                    std::scoped_lock lock(readiness_mutex_);
+                    send_ready_after_ = {};
+                }
                 connected_.store(false, std::memory_order_release);
                 emit_state(false, "closed: " + message->closeInfo.reason);
                 break;
             case ix::WebSocketMessageType::Error:
+                {
+                    std::scoped_lock lock(readiness_mutex_);
+                    send_ready_after_ = {};
+                }
                 connected_.store(false, std::memory_order_release);
                 emit_state(false, "error: " + message->errorInfo.reason);
                 break;
@@ -283,6 +310,9 @@ private:
 
     std::unique_ptr<ix::WebSocketServer> server_;
     std::unique_ptr<ix::WebSocket> client_;
+
+    std::mutex readiness_mutex_;
+    std::chrono::steady_clock::time_point send_ready_after_{};
 
     std::mutex handler_mutex_;
     ReceiveHandler receive_handler_;
