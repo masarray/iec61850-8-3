@@ -119,7 +119,12 @@ DmsPdu ServerCore::error_for(const DmsPdu& request, ServiceStatus status) const 
 
 std::optional<ber::Bytes> ServerCore::handle(std::span<const std::uint8_t> wire_message) {
     const auto request = codec_.decode(wire_message);
+    const auto response = handle_pdu(request);
+    if (!response) return std::nullopt;
+    return codec_.encode(*response);
+}
 
+std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
     if (request.message_class == MessageClass::Association && request.service == ServiceKind::Associate) {
         const auto& associate = std::get<AssociateRequest>(request.payload);
         const auto called_ap = associate.called_ap.value_or("cp1");
@@ -136,7 +141,7 @@ std::optional<ber::Bytes> ServerCore::handle(std::span<const std::uint8_t> wire_
             .max_outstanding_calls = config_.max_outstanding_calls,
             .service_error = std::nullopt
         };
-        return codec_.encode(rsp);
+        return rsp;
     }
 
     if (request.message_class == MessageClass::Association &&
@@ -150,14 +155,13 @@ std::optional<ber::Bytes> ServerCore::handle(std::span<const std::uint8_t> wire_
         rsp.invoke_id = request.invoke_id;
         rsp.payload = ServiceError{ServiceStatus::NoError};
 
-        auto wire = codec_.encode(rsp);
         associated_ = false;
         associate_id_.clear();
-        return wire;
+        return rsp;
     }
 
     if (request.message_class != MessageClass::Request || !request.invoke_id) return std::nullopt;
-    if (!validate_association(request)) return codec_.encode(error_for(request, ServiceStatus::AccessNotAllowedInCurrentState));
+    if (!validate_association(request)) return error_for(request, ServiceStatus::AccessNotAllowedInCurrentState);
 
     DmsPdu rsp;
     rsp.message_class = MessageClass::Response;
@@ -167,49 +171,49 @@ std::optional<ber::Bytes> ServerCore::handle(std::span<const std::uint8_t> wire_
 
     if (request.service == ServiceKind::GetServerDirectory) {
         const auto& req = std::get<GetServerDirectoryRequest>(request.payload);
-        if (req.object_class != ObjectClass::LogicalDevice) return codec_.encode(error_for(request, ServiceStatus::ClassNotSupported));
+        if (req.object_class != ObjectClass::LogicalDevice) return error_for(request, ServiceStatus::ClassNotSupported);
         GetServerDirectoryResponse body;
         for (const auto& ld : model_.logical_devices()) body.logical_devices.push_back(ld.name);
         rsp.payload = std::move(body);
-        return codec_.encode(rsp);
+        return rsp;
     }
 
     if (request.service == ServiceKind::GetLogicalDeviceDirectory) {
         const auto& req = std::get<GetLogicalDeviceDirectoryRequest>(request.payload);
         const auto* ld = model_.find_logical_device(req.logical_device);
-        if (!ld) return codec_.encode(error_for(request, ServiceStatus::InstanceNotAvailable));
+        if (!ld) return error_for(request, ServiceStatus::InstanceNotAvailable);
         GetLogicalDeviceDirectoryResponse body;
         for (const auto& ln : ld->logical_nodes) body.logical_nodes.push_back(ln.name);
         rsp.payload = std::move(body);
-        return codec_.encode(rsp);
+        return rsp;
     }
 
     if (request.service == ServiceKind::GetLogicalNodeDirectory) {
         const auto& req = std::get<GetLogicalNodeDirectoryRequest>(request.payload);
         const auto* ln = model_.find_logical_node(req.logical_node_reference);
-        if (!ln) return codec_.encode(error_for(request, ServiceStatus::InstanceNotAvailable));
-        if (req.acsi_class != AcsiClass::DataObject) return codec_.encode(error_for(request, ServiceStatus::ClassNotSupported));
+        if (!ln) return error_for(request, ServiceStatus::InstanceNotAvailable);
+        if (req.acsi_class != AcsiClass::DataObject) return error_for(request, ServiceStatus::ClassNotSupported);
         GetLogicalNodeDirectoryResponse body;
         for (const auto& object : ln->data_objects) body.instance_names.push_back(object.name);
         rsp.payload = std::move(body);
-        return codec_.encode(rsp);
+        return rsp;
     }
 
     if (request.service == ServiceKind::GetDataDirectory) {
         const auto& req = std::get<GetDataDirectoryRequest>(request.payload);
         const auto* object = model_.find_data_object(req.data_reference);
-        if (!object) return codec_.encode(error_for(request, ServiceStatus::InstanceNotAvailable));
+        if (!object) return error_for(request, ServiceStatus::InstanceNotAvailable);
         GetDataDirectoryResponse body;
         for (const auto& child : object->children) body.sub_data_objects.push_back(child.name);
         for (const auto& attr : object->attributes) body.data_attributes.push_back(attr.name);
         rsp.payload = std::move(body);
-        return codec_.encode(rsp);
+        return rsp;
     }
 
     if (request.service == ServiceKind::GetDataDefinition) {
         const auto& req = std::get<GetDataDefinitionRequest>(request.payload);
         const auto* object = model_.find_data_object(req.data_reference);
-        if (!object) return codec_.encode(error_for(request, ServiceStatus::InstanceNotAvailable));
+        if (!object) return error_for(request, ServiceStatus::InstanceNotAvailable);
 
         GetDataDefinitionResponse body;
         if (!object->cdc.empty()) body.cdc = object->cdc;
@@ -220,7 +224,7 @@ std::optional<ber::Bytes> ServerCore::handle(std::span<const std::uint8_t> wire_
             body.data_attributes.push_back(make_attribute_definition(attr));
         }
         rsp.payload = std::move(body);
-        return codec_.encode(rsp);
+        return rsp;
     }
 
     if (request.service == ServiceKind::GetDataValues) {
@@ -229,28 +233,28 @@ std::optional<ber::Bytes> ServerCore::handle(std::span<const std::uint8_t> wire_
 
         if (const auto* attr = model_.find_data_attribute(req.ref.reference)) {
             if (!attribute_matches_fc(*attr, req.ref.fc)) {
-                return codec_.encode(error_for(request, ServiceStatus::ParameterValueInconsistent));
+                return error_for(request, ServiceStatus::ParameterValueInconsistent);
             }
             body.data_attribute_values.push_back(
                 make_filtered_attribute_value(*attr, req.ref.fc, req.include_element_name));
             rsp.payload = std::move(body);
-            return codec_.encode(rsp);
+            return rsp;
         }
 
         const auto* object = model_.find_data_object(req.ref.reference);
-        if (!object) return codec_.encode(error_for(request, ServiceStatus::InstanceNotAvailable));
+        if (!object) return error_for(request, ServiceStatus::InstanceNotAvailable);
 
         const auto object_value = make_data_object_value(
             *object, req.ref.fc, req.include_element_name);
         if (object_value.children.empty()) {
-            return codec_.encode(error_for(request, ServiceStatus::InstanceNotAvailable));
+            return error_for(request, ServiceStatus::InstanceNotAvailable);
         }
         body.data_attribute_values = object_value.children;
         rsp.payload = std::move(body);
-        return codec_.encode(rsp);
+        return rsp;
     }
 
-    return codec_.encode(error_for(request, ServiceStatus::ClassNotSupported));
+    return error_for(request, ServiceStatus::ClassNotSupported);
 }
 
 } // namespace ar61850::dms
