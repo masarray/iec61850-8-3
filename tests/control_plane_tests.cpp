@@ -96,6 +96,8 @@ int main() {
     assert(model->statusCode == 200);
     assert(model->body.find("\"ied\":\"IED1\"") != std::string::npos);
     assert(model->body.find("LD0/MMXU1.TotW.mag.f") != std::string::npos);
+    assert(model->body.find("DataSetActualValues") != std::string::npos);
+    assert(model->body.find("\"fc\":\"MX\"") != std::string::npos);
 
     auto mutate = client.post(
         control.base_uri() +
