@@ -70,22 +70,34 @@ endif()
 if(AR61850_DMS_BUILD_TESTS)
   enable_testing()
 
+  function(ar61850_enable_test_assertions target)
+    if(MSVC)
+      target_compile_options(${target} PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(${target} PRIVATE -UNDEBUG)
+    endif()
+  endfunction()
+
   add_executable(ar61850_dms_tests tests/core_tests.cpp)
   target_link_libraries(ar61850_dms_tests PRIVATE ar61850::dms)
   add_test(NAME ar61850_dms_tests COMMAND ar61850_dms_tests)
+  ar61850_enable_test_assertions(ar61850_dms_tests)
 
   add_executable(ar61850_dms_protocol_tests tests/protocol_tests.cpp)
   target_link_libraries(ar61850_dms_protocol_tests PRIVATE ar61850::dms)
   add_test(NAME ar61850_dms_protocol_tests COMMAND ar61850_dms_protocol_tests)
+  ar61850_enable_test_assertions(ar61850_dms_protocol_tests)
 
   add_executable(ar61850_dms_runtime_tests tests/runtime_tests.cpp)
   target_link_libraries(ar61850_dms_runtime_tests PRIVATE ar61850::dms)
   add_test(NAME ar61850_dms_runtime_tests COMMAND ar61850_dms_runtime_tests)
+  ar61850_enable_test_assertions(ar61850_dms_runtime_tests)
 
   if(AR61850_DMS_ENABLE_WEBSOCKET)
     add_executable(ar61850_dms_websocket_tests tests/websocket_transport_tests.cpp)
     target_link_libraries(ar61850_dms_websocket_tests PRIVATE ar61850::dms)
     add_test(NAME ar61850_dms_websocket_tests COMMAND ar61850_dms_websocket_tests)
+  ar61850_enable_test_assertions(ar61850_dms_websocket_tests)
 
     add_executable(ar61850_dms_control_plane_tests tests/control_plane_tests.cpp)
     target_link_libraries(ar61850_dms_control_plane_tests PRIVATE
@@ -93,5 +105,6 @@ if(AR61850_DMS_BUILD_TESTS)
       ixwebsocket::ixwebsocket
     )
     add_test(NAME ar61850_dms_control_plane_tests COMMAND ar61850_dms_control_plane_tests)
+  ar61850_enable_test_assertions(ar61850_dms_control_plane_tests)
   endif()
 endif()
