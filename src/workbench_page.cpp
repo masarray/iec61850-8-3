@@ -137,6 +137,14 @@ tr:hover td{background:#fbfcfd}
                 <button id="stopTransport">Stop transport</button>
                 <button id="refreshServer">Refresh</button>
               </div>
+              <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line2)">
+                <div class="note small" style="margin-bottom:7px">Deterministic simulator scenario</div>
+                <div class="toolbar">
+                  <button data-scenario="nominal">Nominal</button>
+                  <button data-scenario="load-step">Load step</button>
+                  <button data-scenario="low-load">Low load</button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="panel">
@@ -341,6 +349,12 @@ $('stopTransport').onclick=()=>post('/api/runtime/transport/stop');
 $('refreshServer').onclick=refreshHealth;$('reloadBtn').onclick=()=>{refreshHealth();refreshModel(true);pollTraces()};
 $('modelRefresh').onclick=()=>refreshModel(true);$('signalRefresh').onclick=()=>refreshModel(true);
 $('clearTrace').onclick=async()=>{await post('/api/traces/clear');S.traces=[];S.lastSeq=0;renderTraces()};
+document.querySelectorAll('[data-scenario]').forEach(b=>b.onclick=async()=>{
+  try{
+    await j('/api/scenarios/'+encodeURIComponent(b.dataset.scenario),{method:'POST'});
+    await refreshModel(true);
+  }catch(e){alert(e.message)}
+});
 refreshHealth();refreshModel(true);pollTraces();
 setInterval(refreshHealth,1000);setInterval(()=>{if(S.view==='model'||S.view==='signals')refreshModel(false)},1500);setInterval(pollTraces,500);
 </script>
