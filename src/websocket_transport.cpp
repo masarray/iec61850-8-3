@@ -144,12 +144,24 @@ private:
             if (level == ix::LogLevel::Error) emit_state(false, message);
         });
 
-        server_->setOnClientMessageCallback(
-            [this](std::shared_ptr<ix::ConnectionState> state,
-                   ix::WebSocket& websocket,
-                   const ix::WebSocketMessagePtr& message) {
+        server_->setOnConnectionCallback(
+            [this](std::weak_ptr<ix::WebSocket> weak_websocket,
+                   std::shared_ptr<ix::ConnectionState> state) {
                 (void) state;
-                handle_passive_message(websocket, message);
+
+                {
+                    std::scoped_lock lock(peer_mutex_);
+                    passive_peer_ = weak_websocket;
+                }
+
+                if (auto websocket = weak_websocket.lock()) {
+                    websocket->setOnMessageCallback(
+                        [this, weak_websocket](const ix::WebSocketMessagePtr& message) {
+                            if (auto peer = weak_websocket.lock()) {
+                                handle_passive_message(*peer, message);
+                            }
+                        });
+                }
             });
 
         const auto listen = server_->listen();
@@ -219,24 +231,13 @@ private:
                 return;
             }
 
-            std::shared_ptr<ix::WebSocket> peer;
-            if (server_) {
-                for (const auto& client : server_->getClients()) {
-                    if (client.get() == &websocket) {
-                        peer = client;
-                        break;
-                    }
-                }
-            }
-            if (!peer) {
-                websocket.close(1011, "unable to retain WebSocket peer");
-                emit_state(false, "unable to retain passive peer");
-                return;
-            }
-
             {
                 std::scoped_lock lock(peer_mutex_);
-                passive_peer_ = peer;
+                if (passive_peer_.expired()) {
+                    websocket.close(1011, "unable to retain WebSocket peer");
+                    emit_state(false, "unable to retain passive peer");
+                    return;
+                }
             }
             connected_.store(true, std::memory_order_release);
             emit_state(true, "client connected at " + message->openInfo.uri);
