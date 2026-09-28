@@ -1,0 +1,16 @@
+{
+  "reference": "Netbeheer-Nederland/iec61850-websocket",
+  "purpose": "optional interoperability oracle for the preliminary IEC 61850-8-3 laboratory profile",
+  "upstream_commit": "f78b0d55780aecab551fb5fd1e75e916bc120215",
+  "asn1_schema": {
+    "path": "src/ws61850/asn1/schema/ws_iec61850_tpaa_full.asn",
+    "git_blob_sha": "b4a6d1ff6a3d24d04c548d46ac29bb0c81404834",
+    "copied_into_runtime": false
+  },
+  "runtime_dependency": false,
+  "notes": [
+    "The native runtime does not download, import, link or spawn the reference implementation.",
+    "Small captured BER vectors are kept in tests as compatibility evidence.",
+    "If the ASN.1 schema itself is imported later, retain its Apache-2.0 notices and add a content SHA-256."
+  ]
+}
