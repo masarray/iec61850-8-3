@@ -98,6 +98,10 @@ public:
         } catch (...) {
         }
 
+        {
+            std::scoped_lock lock(peer_mutex_);
+            passive_peer_.reset();
+        }
         connected_.store(false, std::memory_order_release);
     }
 
@@ -110,13 +114,13 @@ public:
             return client_->sendBinary(payload).success;
         }
 
-        if (!server_ || !connected_.load(std::memory_order_acquire)) return false;
-
-        // Passive mode is intentionally single-peer. Work only with shared_ptr copies
-        // returned by IXWebSocket so the connection cannot disappear during send().
-        const auto clients = server_->getClients();
-        if (clients.size() != 1) return false;
-        return (*clients.begin())->sendBinary(payload).success;
+        std::shared_ptr<ix::WebSocket> peer;
+        {
+            std::scoped_lock lock(peer_mutex_);
+            peer = passive_peer_.lock();
+        }
+        if (!peer) return false;
+        return peer->sendBinary(payload).success;
     }
 
 private:
@@ -215,11 +219,34 @@ private:
                 return;
             }
 
+            std::shared_ptr<ix::WebSocket> peer;
+            if (server_) {
+                for (const auto& client : server_->getClients()) {
+                    if (client.get() == &websocket) {
+                        peer = client;
+                        break;
+                    }
+                }
+            }
+            if (!peer) {
+                websocket.close(1011, "unable to retain WebSocket peer");
+                emit_state(false, "unable to retain passive peer");
+                return;
+            }
+
+            {
+                std::scoped_lock lock(peer_mutex_);
+                passive_peer_ = peer;
+            }
             connected_.store(true, std::memory_order_release);
             emit_state(true, "client connected at " + message->openInfo.uri);
             break;
         }
         case ix::WebSocketMessageType::Close: {
+            {
+                std::scoped_lock lock(peer_mutex_);
+                passive_peer_.reset();
+            }
             connected_.store(false, std::memory_order_release);
             emit_state(false, "client disconnected: " + message->closeInfo.reason);
             break;
@@ -267,6 +294,9 @@ private:
 
     std::unique_ptr<ix::WebSocketServer> server_;
     std::unique_ptr<ix::WebSocket> client_;
+
+    std::mutex peer_mutex_;
+    std::weak_ptr<ix::WebSocket> passive_peer_;
 
     std::mutex handler_mutex_;
     ReceiveHandler receive_handler_;
