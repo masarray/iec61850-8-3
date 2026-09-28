@@ -1,5 +1,6 @@
 #pragma once
 #include "ar61850/dms/protocol.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -303,9 +304,10 @@ inline Bytes encode_data_value(const DataAttributeValue& value) {
         const auto duration = t.value.time_since_epoch();
         const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
         const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(duration - seconds).count();
+        const long double raw_fraction =
+            static_cast<long double>(nanos) * 16777216.0L / 1000000000.0L;
         const auto fraction = static_cast<std::uint32_t>(
-            std::clamp<long double>(
-                static_cast<long double>(nanos) * 16777216.0L / 1000000000.0L, 0.0L, 16777215.0L));
+            std::clamp(raw_fraction, 0.0L, 16777215.0L));
 
         Bytes tq;
         if (t.clock_failure) append(tq, explicit_bool(1, true));
@@ -415,12 +417,15 @@ inline DataAttributeValue decode_data_value(
         for (const auto& field : children(data, limits, depth + 1)) {
             if (field.tag == Tag{TagClass::Context, true, 0}) {
                 const auto sec = decode_explicit_integer(field, 0, limits, "secondSinceEpoch");
-                t.value = std::chrono::system_clock::time_point{std::chrono::seconds{sec}};
+                t.value = std::chrono::system_clock::time_point{
+                    std::chrono::duration_cast<std::chrono::system_clock::duration>(
+                        std::chrono::seconds{static_cast<std::int64_t>(sec)})};
             } else if (field.tag == Tag{TagClass::Context, true, 1}) {
                 const auto fraction = decode_explicit_integer(field, 1, limits, "fractionOfSecond");
                 const auto nanos = static_cast<std::int64_t>(
                     static_cast<long double>(fraction) * 1000000000.0L / 16777216.0L);
-                t.value += std::chrono::nanoseconds{nanos};
+                t.value += std::chrono::duration_cast<std::chrono::system_clock::duration>(
+                    std::chrono::nanoseconds{nanos});
             } else if (field.tag == Tag{TagClass::Context, true, 2}) {
                 const auto tqseq = unwrap_explicit(field, 2, limits, "timeQuality");
                 require_tag(tqseq, TagClass::Universal, true, 16, "timeQuality");
