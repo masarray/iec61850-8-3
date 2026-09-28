@@ -1,6 +1,8 @@
 #include "ar61850/dms/model.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <utility>
 
 namespace ar61850::dms {
 namespace {
@@ -8,7 +10,7 @@ namespace {
 std::vector<std::string> split(std::string_view value, char delimiter) {
     std::vector<std::string> parts;
     std::string current;
-    for (char c : value) {
+    for (const char c : value) {
         if (c == delimiter) {
             parts.push_back(current);
             current.clear();
@@ -20,8 +22,290 @@ std::vector<std::string> split(std::string_view value, char delimiter) {
     return parts;
 }
 
-DataObjectNode simple_do(std::string name) {
-    return DataObjectNode{std::move(name), {}, {}};
+Quality default_quality() {
+    return Quality{
+        .validity = Validity::Good,
+        .source = Source::Process,
+        .test = false,
+        .operator_blocked = false
+    };
+}
+
+Timestamp deterministic_timestamp() {
+    Timestamp t;
+    t.value = std::chrono::system_clock::time_point{std::chrono::seconds{1720458123}}
+        + std::chrono::microseconds{123456};
+    t.clock_failure = false;
+    t.clock_not_synchronized = false;
+    t.time_accuracy = 3;
+    return t;
+}
+
+DataAttributeNode leaf(
+    std::string name,
+    FunctionalConstraint fc,
+    DataType type,
+    DataScalar value = {}) {
+    return DataAttributeNode{
+        .name = std::move(name),
+        .fc = fc,
+        .type = type,
+        .value = std::move(value),
+        .children = {}
+    };
+}
+
+DataAttributeNode structure(
+    std::string name,
+    FunctionalConstraint fc,
+    std::vector<DataAttributeNode> children) {
+    return DataAttributeNode{
+        .name = std::move(name),
+        .fc = fc,
+        .type = DataType::Structure,
+        .value = std::monostate{},
+        .children = std::move(children)
+    };
+}
+
+DataAttributeNode units() {
+    return structure("units", FunctionalConstraint::CF, {
+        leaf("SIUnit", FunctionalConstraint::CF, DataType::Enumerated, std::uint64_t{0}),
+        leaf("multiplier", FunctionalConstraint::CF, DataType::Enumerated, std::uint64_t{0})
+    });
+}
+
+DataObjectNode mv(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "MV",
+        .children = {},
+        .attributes = {
+            structure("mag", FunctionalConstraint::MX, {
+                leaf("f", FunctionalConstraint::MX, DataType::Float32, 0.0F)
+            }),
+            leaf("q", FunctionalConstraint::MX, DataType::Quality, default_quality()),
+            leaf("t", FunctionalConstraint::MX, DataType::Timestamp, deterministic_timestamp()),
+            units()
+        }
+    };
+}
+
+DataObjectNode ens(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "ENS",
+        .children = {},
+        .attributes = {
+            leaf("stVal", FunctionalConstraint::ST, DataType::Enumerated, std::uint64_t{0}),
+            leaf("q", FunctionalConstraint::ST, DataType::Quality, default_quality()),
+            leaf("t", FunctionalConstraint::ST, DataType::Timestamp, deterministic_timestamp())
+        }
+    };
+}
+
+DataObjectNode enc(std::string name) {
+    auto object = ens(std::move(name));
+    object.cdc = "ENC";
+    object.attributes.push_back(
+        leaf("ctlModel", FunctionalConstraint::CF, DataType::Enumerated, std::uint64_t{0}));
+    return object;
+}
+
+DataObjectNode sps(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "SPS",
+        .children = {},
+        .attributes = {
+            leaf("stVal", FunctionalConstraint::ST, DataType::Boolean, false),
+            leaf("q", FunctionalConstraint::ST, DataType::Quality, default_quality()),
+            leaf("t", FunctionalConstraint::ST, DataType::Timestamp, deterministic_timestamp())
+        }
+    };
+}
+
+DataObjectNode lpl(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "LPL",
+        .children = {},
+        .attributes = {
+            leaf("vendor", FunctionalConstraint::DC, DataType::VisibleString255, std::string{}),
+            leaf("swRev", FunctionalConstraint::DC, DataType::VisibleString255, std::string{}),
+            leaf("configRev", FunctionalConstraint::DC, DataType::VisibleString255, std::string{}),
+            leaf("lnNs", FunctionalConstraint::EX, DataType::VisibleString255, std::string{})
+        }
+    };
+}
+
+DataObjectNode dpl(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "DPL",
+        .children = {},
+        .attributes = {
+            leaf("vendor", FunctionalConstraint::DC, DataType::VisibleString255, std::string{}),
+            leaf("hwRev", FunctionalConstraint::DC, DataType::VisibleString255, std::string{}),
+            leaf("swRev", FunctionalConstraint::DC, DataType::VisibleString255, std::string{}),
+            leaf("serNum", FunctionalConstraint::DC, DataType::VisibleString255, std::string{}),
+            leaf("model", FunctionalConstraint::DC, DataType::VisibleString255, std::string{}),
+            leaf("location", FunctionalConstraint::DC, DataType::VisibleString255, std::string{})
+        }
+    };
+}
+
+DataObjectNode cmv(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "CMV",
+        .children = {},
+        .attributes = {
+            structure("cVal", FunctionalConstraint::MX, {
+                structure("mag", FunctionalConstraint::MX, {
+                    leaf("f", FunctionalConstraint::MX, DataType::Float32, 0.0F)
+                })
+            }),
+            leaf("q", FunctionalConstraint::MX, DataType::Quality, default_quality()),
+            leaf("t", FunctionalConstraint::MX, DataType::Timestamp, deterministic_timestamp()),
+            units()
+        }
+    };
+}
+
+DataObjectNode wye(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "WYE",
+        .children = {cmv("phsA"), cmv("phsB"), cmv("phsC")},
+        .attributes = {}
+    };
+}
+
+DataObjectNode del(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "DEL",
+        .children = {cmv("phsAB"), cmv("phsBC"), cmv("phsCA")},
+        .attributes = {}
+    };
+}
+
+DataObjectNode asg(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "ASG",
+        .children = {},
+        .attributes = {
+            structure("setMag", FunctionalConstraint::SP, {
+                leaf("f", FunctionalConstraint::SP, DataType::Float32, 0.0F)
+            }),
+            units(),
+            leaf("dataNs", FunctionalConstraint::EX, DataType::VisibleString255, std::string{})
+        }
+    };
+}
+
+DataObjectNode ing(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "ING",
+        .children = {},
+        .attributes = {
+            leaf("setVal", FunctionalConstraint::SP, DataType::Int32, std::int64_t{0}),
+            units(),
+            leaf("dataNs", FunctionalConstraint::EX, DataType::VisibleString255, std::string{})
+        }
+    };
+}
+
+DataObjectNode apc(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "APC",
+        .children = {},
+        .attributes = {
+            structure("Oper", FunctionalConstraint::CO, {
+                structure("ctlVal", FunctionalConstraint::CO, {
+                    leaf("f", FunctionalConstraint::CO, DataType::Float32, 0.0F)
+                }),
+                structure("origin", FunctionalConstraint::CO, {
+                    leaf("orCat", FunctionalConstraint::CO, DataType::Enumerated, std::uint64_t{0}),
+                    leaf("orIdent", FunctionalConstraint::CO, DataType::OctetString, Bytes{})
+                }),
+                leaf("ctlNum", FunctionalConstraint::CO, DataType::UInt8, std::uint64_t{0}),
+                leaf("T", FunctionalConstraint::CO, DataType::Timestamp, deterministic_timestamp()),
+                leaf("Test", FunctionalConstraint::CO, DataType::Boolean, false),
+                structure("Check", FunctionalConstraint::CO, {
+                    leaf("synchroCheck", FunctionalConstraint::CO, DataType::Boolean, false),
+                    leaf("interlockCheck", FunctionalConstraint::CO, DataType::Boolean, false)
+                })
+            }),
+            structure("mxVal", FunctionalConstraint::MX, {
+                leaf("f", FunctionalConstraint::MX, DataType::Float32, 0.0F)
+            }),
+            leaf("q", FunctionalConstraint::MX, DataType::Quality, default_quality()),
+            leaf("t", FunctionalConstraint::MX, DataType::Timestamp, deterministic_timestamp()),
+            units(),
+            leaf("ctlModel", FunctionalConstraint::CF, DataType::Enumerated, std::uint64_t{1})
+        }
+    };
+}
+
+DataObjectNode inc(std::string name) {
+    return DataObjectNode{
+        .name = std::move(name),
+        .cdc = "INC",
+        .children = {},
+        .attributes = {
+            structure("Oper", FunctionalConstraint::CO, {
+                structure("ctlVal", FunctionalConstraint::CO, {
+                    leaf("f", FunctionalConstraint::CO, DataType::Float32, 0.0F)
+                })
+            }),
+            leaf("stVal", FunctionalConstraint::ST, DataType::Int32, std::int64_t{0}),
+            leaf("q", FunctionalConstraint::ST, DataType::Quality, default_quality()),
+            leaf("t", FunctionalConstraint::ST, DataType::Timestamp, deterministic_timestamp()),
+            leaf("ctlModel", FunctionalConstraint::CF, DataType::Enumerated, std::uint64_t{1}),
+            leaf("dataNs", FunctionalConstraint::EX, DataType::VisibleString255, std::string{})
+        }
+    };
+}
+
+const DataAttributeNode* find_attr(
+    const std::vector<DataAttributeNode>& attributes,
+    const std::vector<std::string>& path,
+    std::size_t index) noexcept {
+    if (index >= path.size()) return nullptr;
+    const auto it = std::find_if(attributes.begin(), attributes.end(),
+        [&](const auto& item) { return item.name == path[index]; });
+    if (it == attributes.end()) return nullptr;
+    if (index + 1 == path.size()) return &*it;
+    return find_attr(it->children, path, index + 1);
+}
+
+DataAttributeNode* find_attr(
+    std::vector<DataAttributeNode>& attributes,
+    const std::vector<std::string>& path,
+    std::size_t index) noexcept {
+    if (index >= path.size()) return nullptr;
+    const auto it = std::find_if(attributes.begin(), attributes.end(),
+        [&](const auto& item) { return item.name == path[index]; });
+    if (it == attributes.end()) return nullptr;
+    if (index + 1 == path.size()) return &*it;
+    return find_attr(it->children, path, index + 1);
+}
+
+template <typename Object>
+Object* descend_object(Object* current, const std::vector<std::string>& path, std::size_t& index) noexcept {
+    while (current && index < path.size()) {
+        auto it = std::find_if(current->children.begin(), current->children.end(),
+            [&](const auto& child) { return child.name == path[index]; });
+        if (it == current->children.end()) break;
+        current = &*it;
+        ++index;
+    }
+    return current;
 }
 
 } // namespace
@@ -52,18 +336,71 @@ const DataObjectNode* IedModel::find_data_object(std::string_view reference) con
     if (!ln) return nullptr;
     const auto path = split(reference.substr(dot + 1), '.');
     if (path.empty()) return nullptr;
-    const DataObjectNode* current = nullptr;
+
     auto first = std::find_if(ln->data_objects.begin(), ln->data_objects.end(),
         [&](const auto& item) { return item.name == path[0]; });
     if (first == ln->data_objects.end()) return nullptr;
-    current = &*first;
-    for (std::size_t i = 1; i < path.size(); ++i) {
-        const auto next = std::find_if(current->children.begin(), current->children.end(),
-            [&](const auto& item) { return item.name == path[i]; });
-        if (next == current->children.end()) return nullptr;
-        current = &*next;
-    }
-    return current;
+
+    const DataObjectNode* current = &*first;
+    std::size_t index = 1;
+    return descend_object(current, path, index) && index == path.size() ? current : nullptr;
+}
+
+const DataAttributeNode* IedModel::find_data_attribute(std::string_view reference) const noexcept {
+    const auto dot = reference.find('.');
+    if (dot == std::string_view::npos) return nullptr;
+    const auto* ln = find_logical_node(reference.substr(0, dot));
+    if (!ln) return nullptr;
+
+    const auto path = split(reference.substr(dot + 1), '.');
+    if (path.size() < 2) return nullptr;
+
+    auto first = std::find_if(ln->data_objects.begin(), ln->data_objects.end(),
+        [&](const auto& item) { return item.name == path[0]; });
+    if (first == ln->data_objects.end()) return nullptr;
+
+    const DataObjectNode* object = &*first;
+    std::size_t index = 1;
+    object = descend_object(object, path, index);
+    if (!object || index >= path.size()) return nullptr;
+    return find_attr(object->attributes, path, index);
+}
+
+DataAttributeNode* IedModel::find_data_attribute(std::string_view reference) noexcept {
+    const auto dot = reference.find('.');
+    if (dot == std::string_view::npos) return nullptr;
+
+    const auto slash = reference.find('/');
+    if (slash == std::string_view::npos || slash > dot) return nullptr;
+    const auto ld_name = reference.substr(0, slash);
+    const auto ln_name = reference.substr(slash + 1, dot - slash - 1);
+
+    auto ld_it = std::find_if(logical_devices_.begin(), logical_devices_.end(),
+        [&](const auto& item) { return item.name == ld_name; });
+    if (ld_it == logical_devices_.end()) return nullptr;
+    auto ln_it = std::find_if(ld_it->logical_nodes.begin(), ld_it->logical_nodes.end(),
+        [&](const auto& item) { return item.name == ln_name; });
+    if (ln_it == ld_it->logical_nodes.end()) return nullptr;
+
+    const auto path = split(reference.substr(dot + 1), '.');
+    if (path.size() < 2) return nullptr;
+
+    auto first = std::find_if(ln_it->data_objects.begin(), ln_it->data_objects.end(),
+        [&](const auto& item) { return item.name == path[0]; });
+    if (first == ln_it->data_objects.end()) return nullptr;
+
+    DataObjectNode* object = &*first;
+    std::size_t index = 1;
+    object = descend_object(object, path, index);
+    if (!object || index >= path.size()) return nullptr;
+    return find_attr(object->attributes, path, index);
+}
+
+bool IedModel::set_float(std::string_view reference, float value) noexcept {
+    auto* attr = find_data_attribute(reference);
+    if (!attr || attr->type != DataType::Float32) return false;
+    attr->value = value;
+    return true;
 }
 
 IedModel IedModel::make_ft20_reference_model() {
@@ -73,25 +410,39 @@ IedModel IedModel::make_ft20_reference_model() {
     ld0.name = "LD0";
 
     LogicalNodeModel lln0{"LLN0", {
-        simple_do("Mod"), simple_do("NamPlt"), simple_do("Beh"), simple_do("Health")
+        enc("Mod"), lpl("NamPlt"), ens("Beh"), ens("Health")
     }};
-    LogicalNodeModel lphd1{"LPHD1", {simple_do("PhyHealth"), simple_do("Proxy")}};
-    LogicalNodeModel dwmx1{"DWMX1", {simple_do("Beh"), simple_do("WMaxSpt")}};
-    LogicalNodeModel dgen1{"DGEN1", {simple_do("Beh")}};
 
-    DataObjectNode totw{"TotW", {}, {
-        {"mag", FunctionalConstraint::MX}, {"q", FunctionalConstraint::MX}, {"t", FunctionalConstraint::MX}
+    LogicalNodeModel lphd1{"LPHD1", {
+        dpl("PhyNam"), ens("PhyHealth"), sps("Proxy"), sps("PwrUp")
     }};
-    DataObjectNode totvar{"TotVAr", {}, {
-        {"mag", FunctionalConstraint::MX}, {"q", FunctionalConstraint::MX}, {"t", FunctionalConstraint::MX}
+
+    LogicalNodeModel dwmx1{"DWMX1", {
+        lpl("NamPlt"), ens("Beh"), apc("WMaxSptPct"), apc("WMaxSpt"),
+        asg("WMaxSetPct"), asg("WMaxSet"), ing("WMaxFto"), inc("SptReas")
     }};
+
+    LogicalNodeModel dgen1{"DGEN1", {
+        lpl("NamPlt"), ens("Beh"), ens("DEROpSt")
+    }};
+
     LogicalNodeModel mmxu1{"MMXU1", {
-        simple_do("Beh"), std::move(totw), std::move(totvar), simple_do("PhV"), simple_do("PPV"),
-        simple_do("A"), simple_do("AvWPhs"), simple_do("MaxWPhs"), simple_do("MinWPhs")
+        ens("Beh"), mv("TotW"), mv("TotVAr"), wye("PhV"), del("PPV"), wye("A"),
+        mv("AvWPhs"), mv("MaxWPhs"), mv("MinWPhs")
     }};
 
-    ld0.logical_nodes = {std::move(lln0), std::move(lphd1), std::move(dwmx1), std::move(dgen1), std::move(mmxu1)};
+    ld0.logical_nodes = {
+        std::move(lln0), std::move(lphd1), std::move(dwmx1),
+        std::move(dgen1), std::move(mmxu1)
+    };
+
     model.logical_devices_.push_back(std::move(ld0));
+
+    // Deterministic, visible values make lab behavior obvious.
+    model.set_float("LD0/MMXU1.TotW.mag.f", 10.0F);
+    model.set_float("LD0/MMXU1.TotVAr.mag.f", 20.0F);
+    model.set_float("LD0/DWMX1.WMaxSpt.mxVal.f", 6.0F);
+
     return model;
 }
 
