@@ -68,7 +68,9 @@ Captured FT20 BER responses are used as golden interoperability vectors. For the
 
 ## Current boundary
 
-The server core is **not yet a network server**. WebSocket transport, GetDataDefinition/GetDataValues responses, DataSets, RCB/reporting and the headless Web Workbench are the next gates.
+The P2 read-only standalone server foundation is now in place: native WebSocket transport, association/discovery, GetDataDefinition and GetDataValues run through the real DMS wire path without Python or Netbeheer.
+
+The next product gate is the **P3 Headless Web Lab**: a local control/event API and browser Workbench/Inspector that observes and controls this long-running native server without owning protocol state. DataSets and RCB/reporting follow in P4.
 
 See:
 
@@ -81,11 +83,11 @@ See:
 
 ### P2 — standalone native DMS server
 
-- WebSocket transport;
-- independent IEC role vs active/passive WebSocket role;
-- GetDataDefinition and complete GetDataValues;
-- native server CLI;
-- deterministic server integration tests.
+- [x] WebSocket transport;
+- [x] independent IEC role vs active/passive WebSocket role;
+- [x] GetDataDefinition and GetDataValues;
+- [x] native server CLI;
+- [x] deterministic real-WebSocket integration tests.
 
 ### P3 — headless Web Lab
 
