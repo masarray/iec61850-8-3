@@ -1,6 +1,7 @@
 #include "ar61850/dms/websocket_transport.hpp"
 
 #include <ixwebsocket/IXConnectionState.h>
+#include <ixwebsocket/IXGetFreePort.h>
 #include <ixwebsocket/IXNetSystem.h>
 #include <ixwebsocket/IXSocketServer.h>
 #include <ixwebsocket/IXWebSocket.h>
@@ -40,7 +41,9 @@ class WebSocketTransport::Impl {
 public:
     explicit Impl(WebSocketTransportConfig config) : config_(std::move(config)) {
         if (config_.host.empty()) throw std::invalid_argument("WebSocket host cannot be empty");
-        if (config_.port == 0) throw std::invalid_argument("WebSocket port must be non-zero");
+        if (config_.mode == WebSocketMode::ActiveConnect && config_.port == 0) {
+            throw std::invalid_argument("active WebSocket port must be non-zero");
+        }
         if (config_.max_message_size == 0) {
             throw std::invalid_argument("WebSocket max_message_size must be non-zero");
         }
@@ -128,6 +131,14 @@ public:
 
 private:
     void start_passive() {
+        if (config_.port == 0) {
+            const auto free_port = ix::getFreePort();
+            if (free_port <= 0 || free_port > 65535) {
+                throw std::runtime_error("unable to allocate a free WebSocket port");
+            }
+            config_.port = static_cast<std::uint16_t>(free_port);
+        }
+
         server_ = std::make_unique<ix::WebSocketServer>(
             static_cast<int>(config_.port),
             config_.host,
