@@ -109,6 +109,38 @@ std::vector<DataAttributeValue> decode_data_attribute_values(
     return result;
 }
 
+
+FcdFcdaRef decode_fcd_fcda(const ber::Tlv& seq, const ber::Limits& limits) {
+    using namespace ber;
+    require_tag(seq, TagClass::Universal, true, 16, "FcdFcdaType");
+    FcdFcdaRef ref;
+    for (const auto& field : children(seq, limits, 5)) {
+        if (field.tag == Tag{TagClass::Context, true, 0}) {
+            ref.reference = decode_explicit_string(field, 0, limits, "FcdFcdaType.ref");
+        } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+            ref.fc = static_cast<FunctionalConstraint>(
+                decode_explicit_enum(field, 1, limits, "FcdFcdaType.fc"));
+        }
+    }
+    if (ref.reference.empty()) throw Error("DMS BER: FcdFcdaType missing ref");
+    return ref;
+}
+
+std::vector<FcdFcdaRef> decode_fcd_fcda_list(
+    const ber::Tlv& explicit_field,
+    std::uint32_t tag,
+    const ber::Limits& limits,
+    const char* label) {
+    using namespace ber;
+    const auto list = unwrap_explicit(explicit_field, tag, limits, label);
+    require_tag(list, TagClass::Universal, true, 16, label);
+    std::vector<FcdFcdaRef> refs;
+    for (const auto& item : children(list, limits, 5)) {
+        refs.push_back(decode_fcd_fcda(item, limits));
+    }
+    return refs;
+}
+
 } // namespace
 
 DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
@@ -304,6 +336,45 @@ DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
             return pdu;
         }
 
+
+        if (service.tag == Tag{TagClass::Context, true, 7}) {
+            pdu.service = ServiceKind::GetDataSetValues;
+            const auto fields = service_fields(service, limits_, "getDataSetValues");
+            GetDataSetValuesRequest req;
+            for (const auto& field : fields) {
+                if (field.tag == Tag{TagClass::Context, true, 0}) {
+                    req.data_set_reference =
+                        decode_explicit_string(field, 0, limits_, "dsRef");
+                }
+            }
+            if (req.data_set_reference.empty()) {
+                throw Error("DMS BER: getDataSetValues missing dsRef");
+            }
+            pdu.payload = std::move(req);
+            return pdu;
+        }
+
+        if (service.tag == Tag{TagClass::Context, true, 11}) {
+            pdu.service = ServiceKind::GetDataSetDirectory;
+            const auto fields = service_fields(service, limits_, "getDataSetDirectory");
+            GetDataSetDirectoryRequest req;
+            for (const auto& field : fields) {
+                if (field.tag == Tag{TagClass::Context, true, 0}) {
+                    req.data_set_reference =
+                        decode_explicit_string(field, 0, limits_, "dsRef");
+                } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+                    const auto seq = unwrap_explicit(
+                        field, 1, limits_, "continueAfter");
+                    req.continue_after = decode_fcd_fcda(seq, limits_);
+                }
+            }
+            if (req.data_set_reference.empty()) {
+                throw Error("DMS BER: getDataSetDirectory missing dsRef");
+            }
+            pdu.payload = std::move(req);
+            return pdu;
+        }
+
         pdu.service = ServiceKind::Unknown;
         return pdu;
     }
@@ -420,6 +491,38 @@ DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
             for (const auto& field : fields) {
                 if (field.tag == Tag{TagClass::Context, true, 0}) {
                     rsp.data_attribute_values = decode_data_attribute_values(field, limits_);
+                }
+            }
+            pdu.payload = std::move(rsp);
+            return pdu;
+        }
+
+
+        if (service.tag == Tag{TagClass::Context, true, 7}) {
+            pdu.service = ServiceKind::GetDataSetValues;
+            const auto fields = service_fields(service, limits_, "getDataSetValuesResponse");
+            GetDataSetValuesResponse rsp;
+            for (const auto& field : fields) {
+                if (field.tag == Tag{TagClass::Context, true, 0}) {
+                    rsp.member_values = decode_data_attribute_values(field, limits_);
+                }
+            }
+            pdu.payload = std::move(rsp);
+            return pdu;
+        }
+
+        if (service.tag == Tag{TagClass::Context, true, 11}) {
+            pdu.service = ServiceKind::GetDataSetDirectory;
+            const auto fields = service_fields(
+                service, limits_, "getDataSetDirectoryResponse");
+            GetDataSetDirectoryResponse rsp;
+            for (const auto& field : fields) {
+                if (field.tag == Tag{TagClass::Context, true, 0}) {
+                    rsp.members = decode_fcd_fcda_list(
+                        field, 0, limits_, "dsMemberRef");
+                } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+                    rsp.more_follows =
+                        decode_explicit_bool(field, 1, limits_, "moreFollows");
                 }
             }
             pdu.payload = std::move(rsp);
