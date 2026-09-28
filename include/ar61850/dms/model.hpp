@@ -9,31 +9,6 @@
 
 namespace ar61850::dms {
 
-enum class DataType : std::uint8_t {
-    Structure,
-    Boolean,
-    Int8,
-    Int16,
-    Int24,
-    Int32,
-    Int64,
-    UInt8,
-    UInt16,
-    UInt24,
-    UInt32,
-    Float32,
-    OctetString,
-    VisibleString64,
-    VisibleString129,
-    VisibleString255,
-    BitString,
-    Quality,
-    Timestamp,
-    Enumerated,
-    Check,
-    Unknown
-};
-
 struct DataAttributeNode {
     std::string name;
     FunctionalConstraint fc{FunctionalConstraint::ST};
