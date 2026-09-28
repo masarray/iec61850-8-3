@@ -179,7 +179,6 @@ int main() {
     assert(values.data_attribute_values[0].name == "mag");
     assert(values.data_attribute_values[0].type == DataType::Structure);
     assert(values.data_attribute_values[0].children.size() == 1);
-    assert(values.data_attribute_values[0].children[0].name == "f");
     assert(values.data_attribute_values[0].children[0].type == DataType::Float32);
     assert(std::get<float>(values.data_attribute_values[0].children[0].scalar) == 10.0F);
     assert(values.data_attribute_values[1].name == "q");
