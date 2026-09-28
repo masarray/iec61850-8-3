@@ -52,8 +52,8 @@ Exit: our codec can reproduce and decode the pinned laboratory message vectors w
 - [x] GetLogicalDeviceDirectory
 - [x] GetLogicalNodeDirectory (DataObject class)
 - [x] GetDataDirectory
-- [ ] GetDataDefinition
-- [ ] GetDataValues
+- [x] GetDataDefinition
+- [x] GetDataValues
 - [x] canonical in-memory IED model
 - [x] deterministic sample IED
 - [x] server CLI
