@@ -73,6 +73,107 @@ ber::Bytes encode_fcd_fcda_list(const std::vector<FcdFcdaRef>& refs) {
 }
 
 
+ber::Bytes explicit_signed_integer(std::uint32_t tag, std::int64_t value) {
+    using namespace ber;
+    const auto content = signed_integer_content(value);
+    const auto integer_tlv = tlv({TagClass::Universal, false, 2}, content);
+    return context_explicit(tag, integer_tlv);
+}
+
+ber::Bytes explicit_octets(std::uint32_t tag, const Bytes& bytes) {
+    using namespace ber;
+    const auto octets = tlv({TagClass::Universal, false, 4}, bytes);
+    return context_explicit(tag, octets);
+}
+
+ber::Bytes encode_get_rcb_response_fields(
+    const ReportControlState& state,
+    bool buffered) {
+    using namespace ber;
+    Bytes fields;
+    append(fields, explicit_string(0, state.report_id));
+    append(fields, explicit_bool(1, state.enabled));
+    append(fields, explicit_string(2, state.data_set));
+    append(fields, explicit_integer(3, state.conf_rev));
+    append(fields, context_explicit(
+        4, encode_report_optional_fields(state.optional_fields)));
+    append(fields, explicit_integer(5, state.buffer_time_ms));
+    append(fields, explicit_integer(6, state.sequence_number));
+    append(fields, context_explicit(7, encode_trigger_options(state.triggers)));
+    append(fields, explicit_integer(8, state.integrity_period_ms));
+    append(fields, explicit_bool(9, state.gi));
+
+    if (buffered) {
+        append(fields, explicit_bool(10, state.purge_buffer));
+        Bytes entry = state.entry_id;
+        if (entry.empty()) entry.assign(8, 0);
+        if (entry.size() != 8) throw Error("DMS BER: BRCB entryID must be 8 bytes");
+        append(fields, explicit_octets(11, entry));
+        append(fields, context_explicit(
+            12, encode_timestamp_sequence(
+                state.time_of_entry.value_or(Timestamp{}))));
+        append(fields, explicit_signed_integer(
+            13, state.reserved_time_seconds));
+        if (!state.owner.empty()) {
+            if (state.owner.size() != 64) {
+                throw Error("DMS BER: BRCB owner must be 64 bytes");
+            }
+            append(fields, explicit_octets(14, state.owner));
+        }
+    } else {
+        append(fields, explicit_bool(12, state.reserved));
+        if (!state.owner.empty()) {
+            if (state.owner.size() != 64) {
+                throw Error("DMS BER: URCB owner must be 64 bytes");
+            }
+            append(fields, explicit_octets(13, state.owner));
+        }
+    }
+    return fields;
+}
+
+ber::Bytes encode_set_rcb_request_fields(
+    const SetReportControlValuesRequest& req,
+    bool buffered) {
+    using namespace ber;
+    Bytes fields;
+    append(fields, explicit_string(0, req.reference));
+    if (req.buffer_time_ms) append(fields, explicit_integer(1, *req.buffer_time_ms));
+    if (req.data_set) append(fields, explicit_string(2, *req.data_set));
+    if (req.gi) append(fields, explicit_bool(4, *req.gi));
+    if (req.integrity_period_ms) {
+        append(fields, explicit_integer(5, *req.integrity_period_ms));
+    }
+    if (req.optional_fields) {
+        append(fields, context_explicit(
+            6, encode_report_optional_fields(*req.optional_fields)));
+    }
+
+    if (buffered) {
+        if (req.purge_buffer) append(fields, explicit_bool(7, *req.purge_buffer));
+        if (req.enabled) append(fields, explicit_bool(8, *req.enabled));
+        if (req.report_id) append(fields, explicit_string(9, *req.report_id));
+        if (req.reserved_time_seconds) {
+            append(fields, explicit_signed_integer(
+                10, *req.reserved_time_seconds));
+        }
+        if (req.triggers) {
+            append(fields, context_explicit(
+                11, encode_trigger_options(*req.triggers)));
+        }
+    } else {
+        if (req.enabled) append(fields, explicit_bool(7, *req.enabled));
+        if (req.report_id) append(fields, explicit_string(8, *req.report_id));
+        if (req.reserved) append(fields, explicit_bool(9, *req.reserved));
+        if (req.triggers) {
+            append(fields, context_explicit(
+                10, encode_trigger_options(*req.triggers)));
+        }
+    }
+    return fields;
+}
+
+
 } // namespace
 
 ProtocolCodec::ProtocolCodec(ber::Limits limits) : limits_(limits) {}
@@ -190,6 +291,27 @@ ber::Bytes ProtocolCodec::encode(const DmsPdu& pdu) const {
             }
             return encode_request_envelope(pdu, 11, fields);
         }
+        if (pdu.service == ServiceKind::GetBrcbValues ||
+            pdu.service == ServiceKind::GetUrcbValues) {
+            const auto& req =
+                std::get<GetReportControlValuesRequest>(pdu.payload);
+            Bytes fields;
+            append(fields, explicit_string(0, req.reference));
+            return encode_request_envelope(
+                pdu,
+                pdu.service == ServiceKind::GetBrcbValues ? 12U : 14U,
+                fields);
+        }
+        if (pdu.service == ServiceKind::SetBrcbValues ||
+            pdu.service == ServiceKind::SetUrcbValues) {
+            const auto& req =
+                std::get<SetReportControlValuesRequest>(pdu.payload);
+            return encode_request_envelope(
+                pdu,
+                pdu.service == ServiceKind::SetBrcbValues ? 13U : 15U,
+                encode_set_rcb_request_fields(
+                    req, pdu.service == ServiceKind::SetBrcbValues));
+        }
     }
 
     if (pdu.message_class == MessageClass::Response) {
@@ -261,6 +383,28 @@ ber::Bytes ProtocolCodec::encode(const DmsPdu& pdu) const {
             append(fields, context_explicit(0, encode_fcd_fcda_list(rsp.members)));
             if (rsp.more_follows) append(fields, explicit_bool(1, *rsp.more_follows));
             return encode_response_envelope(pdu, 11, fields);
+        }
+        if (pdu.service == ServiceKind::GetBrcbValues ||
+            pdu.service == ServiceKind::GetUrcbValues) {
+            const auto& rsp =
+                std::get<GetReportControlValuesResponse>(pdu.payload);
+            const bool buffered =
+                pdu.service == ServiceKind::GetBrcbValues;
+            return encode_response_envelope(
+                pdu,
+                buffered ? 12U : 14U,
+                encode_get_rcb_response_fields(rsp.state, buffered));
+        }
+        if (pdu.service == ServiceKind::SetBrcbValues ||
+            pdu.service == ServiceKind::SetUrcbValues) {
+            const auto& rsp =
+                std::get<SetReportControlValuesResponse>(pdu.payload);
+            Bytes fields;
+            if (rsp.ok) append(fields, explicit_enum(0, 0));
+            return encode_response_envelope(
+                pdu,
+                pdu.service == ServiceKind::SetBrcbValues ? 13U : 15U,
+                fields);
         }
         if (pdu.service == ServiceKind::GetDataDirectory) {
             const auto& rsp = std::get<GetDataDirectoryResponse>(pdu.payload);
