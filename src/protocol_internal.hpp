@@ -271,6 +271,145 @@ inline DataAttributeDefinition decode_type_spec(
     return out;
 }
 
+inline Bytes encode_trigger_options(const TriggerOptions& triggers) {
+    Bytes fields;
+    if (triggers.data_change) append(fields, explicit_bool(0, true));
+    if (triggers.quality_change) append(fields, explicit_bool(1, true));
+    if (triggers.data_update) append(fields, explicit_bool(2, true));
+    if (triggers.integrity) append(fields, explicit_bool(3, true));
+    if (triggers.general_interrogation) append(fields, explicit_bool(4, true));
+    return sequence(fields);
+}
+
+inline TriggerOptions decode_trigger_options(
+    const Tlv& sequence_tlv,
+    const Limits& limits,
+    std::size_t depth = 0) {
+    require_tag(sequence_tlv, TagClass::Universal, true, 16, "TrgOps");
+    TriggerOptions out;
+    for (const auto& field : children(sequence_tlv, limits, depth + 1)) {
+        if (field.tag == Tag{TagClass::Context, true, 0}) {
+            out.data_change = decode_explicit_bool(field, 0, limits, "dchg");
+        } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+            out.quality_change = decode_explicit_bool(field, 1, limits, "qchg");
+        } else if (field.tag == Tag{TagClass::Context, true, 2}) {
+            out.data_update = decode_explicit_bool(field, 2, limits, "dupd");
+        } else if (field.tag == Tag{TagClass::Context, true, 3}) {
+            out.integrity = decode_explicit_bool(field, 3, limits, "integrity");
+        } else if (field.tag == Tag{TagClass::Context, true, 4}) {
+            out.general_interrogation =
+                decode_explicit_bool(field, 4, limits, "gi");
+        }
+    }
+    return out;
+}
+
+inline Bytes encode_report_optional_fields(const ReportOptionalFields& options) {
+    Bytes fields;
+    append(fields, explicit_bool(0, options.sequence_number));
+    append(fields, explicit_bool(1, options.timestamp));
+    append(fields, explicit_bool(2, options.data_set));
+    append(fields, explicit_bool(3, options.buffer_overflow));
+    append(fields, explicit_bool(4, options.config_revision));
+    append(fields, explicit_bool(5, options.entry_id));
+    append(fields, explicit_bool(6, options.data_reference));
+    append(fields, explicit_bool(7, options.reason_code));
+    return sequence(fields);
+}
+
+inline ReportOptionalFields decode_report_optional_fields(
+    const Tlv& sequence_tlv,
+    const Limits& limits,
+    std::size_t depth = 0) {
+    require_tag(sequence_tlv, TagClass::Universal, true, 16, "OptFldsRCB");
+    ReportOptionalFields out{};
+    for (const auto& field : children(sequence_tlv, limits, depth + 1)) {
+        if (field.tag.tag_class != TagClass::Context || !field.tag.constructed) continue;
+        const bool value = decode_explicit_bool(
+            field, field.tag.number, limits, "OptFldsRCB field");
+        switch (field.tag.number) {
+        case 0: out.sequence_number = value; break;
+        case 1: out.timestamp = value; break;
+        case 2: out.data_set = value; break;
+        case 3: out.buffer_overflow = value; break;
+        case 4: out.config_revision = value; break;
+        case 5: out.entry_id = value; break;
+        case 6: out.data_reference = value; break;
+        case 7: out.reason_code = value; break;
+        default: break;
+        }
+    }
+    return out;
+}
+
+inline Bytes encode_timestamp_sequence(const Timestamp& timestamp) {
+    const auto duration = timestamp.value.time_since_epoch();
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
+    const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        duration - seconds).count();
+    const long double raw_fraction =
+        static_cast<long double>(nanos) * 16777216.0L / 1000000000.0L;
+    const auto fraction = static_cast<std::uint32_t>(
+        std::clamp(raw_fraction, 0.0L, 16777215.0L));
+
+    Bytes time_quality;
+    if (timestamp.clock_failure) append(time_quality, explicit_bool(1, true));
+    if (timestamp.clock_not_synchronized) {
+        append(time_quality, explicit_bool(2, true));
+    }
+    if (timestamp.time_accuracy) {
+        append(time_quality, explicit_integer(3, *timestamp.time_accuracy));
+    }
+
+    Bytes fields;
+    append(fields, explicit_integer(
+        0, static_cast<std::uint64_t>(seconds.count())));
+    append(fields, explicit_integer(1, fraction));
+    append(fields, context_explicit(2, sequence(time_quality)));
+    return sequence(fields);
+}
+
+inline Timestamp decode_timestamp_sequence(
+    const Tlv& sequence_tlv,
+    const Limits& limits,
+    std::size_t depth = 0) {
+    require_tag(sequence_tlv, TagClass::Universal, true, 16, "TimeStamp");
+    std::uint64_t seconds = 0;
+    std::uint64_t fraction = 0;
+    Timestamp timestamp;
+    for (const auto& field : children(sequence_tlv, limits, depth + 1)) {
+        if (field.tag == Tag{TagClass::Context, true, 0}) {
+            seconds = decode_explicit_integer(
+                field, 0, limits, "secondSinceEpoch");
+        } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+            fraction = decode_explicit_integer(
+                field, 1, limits, "fractionOfSecond");
+        } else if (field.tag == Tag{TagClass::Context, true, 2}) {
+            const auto tq = unwrap_explicit(field, 2, limits, "timeQuality");
+            require_tag(tq, TagClass::Universal, true, 16, "TimeQuality");
+            for (const auto& q : children(tq, limits, depth + 2)) {
+                if (q.tag == Tag{TagClass::Context, true, 1}) {
+                    timestamp.clock_failure =
+                        decode_explicit_bool(q, 1, limits, "clockFailure");
+                } else if (q.tag == Tag{TagClass::Context, true, 2}) {
+                    timestamp.clock_not_synchronized =
+                        decode_explicit_bool(
+                            q, 2, limits, "clockNotSynchronized");
+                } else if (q.tag == Tag{TagClass::Context, true, 3}) {
+                    timestamp.time_accuracy = static_cast<std::uint8_t>(
+                        decode_explicit_integer(q, 3, limits, "timeAccuracy"));
+                }
+            }
+        }
+    }
+    const auto nanos = static_cast<std::int64_t>(
+        static_cast<long double>(fraction) * 1000000000.0L / 16777216.0L);
+    timestamp.value = std::chrono::system_clock::time_point{
+        std::chrono::seconds{static_cast<std::int64_t>(seconds)}} +
+        std::chrono::nanoseconds{nanos};
+    return timestamp;
+}
+
 inline Bytes encode_data_value(const DataAttributeValue& value) {
     const auto tag = data_type_tag(value.type);
     if (tag == 0) throw Error("DMS BER: unsupported DataType in Data");
