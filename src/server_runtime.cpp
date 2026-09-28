@@ -41,7 +41,7 @@ void ServerRuntime::start() {
     bool expected = false;
     if (!running_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return;
     try {
-        transport_->start();
+        if (!start_transport()) throw std::runtime_error("unable to start transport");
         emit(RuntimeEvent::Kind::Started);
     } catch (...) {
         running_.store(false, std::memory_order_release);
@@ -51,13 +51,36 @@ void ServerRuntime::start() {
 
 void ServerRuntime::stop() noexcept {
     if (!running_.exchange(false, std::memory_order_acq_rel)) return;
+    stop_transport();
+    service_worker_.stop();
+    emit(RuntimeEvent::Kind::Stopped);
+}
+
+bool ServerRuntime::start_transport() {
+    if (!running()) return false;
+    std::scoped_lock lock(transport_mutex_);
+    if (transport_active_.load(std::memory_order_acquire)) return true;
+    try {
+        transport_->start();
+        transport_active_.store(true, std::memory_order_release);
+        return true;
+    } catch (...) {
+        transport_active_.store(false, std::memory_order_release);
+        transport_connected_.store(false, std::memory_order_release);
+        throw;
+    }
+}
+
+bool ServerRuntime::stop_transport() noexcept {
+    std::scoped_lock lock(transport_mutex_);
+    if (!transport_active_.exchange(false, std::memory_order_acq_rel)) return true;
     try {
         transport_->stop();
     } catch (...) {
+        return false;
     }
-    service_worker_.stop();
     transport_connected_.store(false, std::memory_order_release);
-    emit(RuntimeEvent::Kind::Stopped);
+    return true;
 }
 
 std::optional<IedModel> ServerRuntime::model_snapshot(std::chrono::milliseconds timeout) {
@@ -109,16 +132,19 @@ bool ServerRuntime::set_float(
 
 void ServerRuntime::on_receive(Bytes payload) {
     if (!running()) return;
-    trace_wire(Direction::Rx, payload.size());
 
     const bool accepted = service_worker_.post([this, payload = std::move(payload)]() mutable {
         try {
-            auto response = core_.handle(payload);
-            if (!response || response->empty()) return;
+            const auto request = codec_.decode(payload);
+            trace_wire(Direction::Rx, request, payload.size());
 
-            const auto byte_count = response->size();
-            if (transport_->send(std::move(*response))) {
-                trace_wire(Direction::Tx, byte_count);
+            auto response = core_.handle_pdu(request);
+            if (!response) return;
+
+            auto wire = codec_.encode(*response);
+            const auto byte_count = wire.size();
+            if (transport_->send(std::move(wire))) {
+                trace_wire(Direction::Tx, *response, byte_count);
             } else {
                 emit(RuntimeEvent::Kind::TransportDisconnected, "transport rejected send");
             }
@@ -139,12 +165,16 @@ void ServerRuntime::emit(RuntimeEvent::Kind kind, std::string detail) {
     if (event_handler_) event_handler_(RuntimeEvent{kind, std::move(detail)});
 }
 
-void ServerRuntime::trace_wire(Direction direction, std::size_t bytes) {
+void ServerRuntime::trace_wire(Direction direction, const DmsPdu& pdu, std::size_t bytes) {
     TraceEvent event;
     event.observed_at = std::chrono::system_clock::now();
     event.endpoint = EndpointRole::Server;
     event.direction = direction;
+    event.message_class = pdu.message_class;
+    event.service = pdu.service;
     event.byte_count = bytes;
+    event.invoke_id = pdu.invoke_id;
+    event.associate_id = pdu.associate_id;
     trace_.push(std::move(event));
 }
 
