@@ -141,6 +141,27 @@ int main() {
     assert(wire_rsp.has_value());
     assert_equal(*wire_rsp, ln_dir_rsp, "native server GetLogicalNodeDirectory");
 
+    // Canonical model exposes nested IEC attributes without dynamic dictionaries.
+    {
+        auto model = IedModel::make_ft20_reference_model();
+        const auto* totw = model.find_data_object("LD0/MMXU1.TotW");
+        assert(totw && totw->cdc == "MV");
+
+        const auto* mag_f = model.find_data_attribute("LD0/MMXU1.TotW.mag.f");
+        assert(mag_f && mag_f->fc == FunctionalConstraint::MX);
+        assert(mag_f->type == DataType::Float32);
+        assert(std::get<float>(mag_f->value) == 10.0F);
+
+        assert(model.set_float("LD0/MMXU1.TotW.mag.f", 42.5F));
+        mag_f = model.find_data_attribute("LD0/MMXU1.TotW.mag.f");
+        assert(mag_f && std::get<float>(mag_f->value) == 42.5F);
+
+        const auto* phase = model.find_data_object("LD0/MMXU1.PhV.phsA");
+        assert(phase && phase->cdc == "CMV");
+        const auto* phase_mag = model.find_data_attribute("LD0/MMXU1.PhV.phsA.cVal.mag.f");
+        assert(phase_mag && phase_mag->type == DataType::Float32);
+    }
+
     // Association lifecycle is explicit and leaves the server disconnected.
     DmsPdu release_req;
     release_req.message_class = MessageClass::Association;
