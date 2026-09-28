@@ -1,44 +1,94 @@
 # Architecture
 
+## Non-negotiable product boundary
+
+`iec61850-8-3` must run as a complete laboratory endpoint **without Netbeheer, Python, or another IEC 61850-8-3 implementation installed**.
+
+Netbeheer is retained only for optional interoperability tests and captured behavioral evidence.
+
+The intended sequence is:
+
+```text
+1. iec61850-8-3 native server + headless web lab
+2. prove standalone discovery/data/reporting
+3. add native client in this repo for self-test
+4. integrate DMS client adapter into ARStack61850
+5. ARStack reads/subscribes to this repo's server
+6. external Netbeheer tests remain optional compatibility evidence
+```
+
 ## Target shape
 
 ```text
-Applications / Workbench / CI
+                Browser
+                  |
+          Local HTTP / event API
+                  |
+        +---------------------+
+        | Headless Web Lab    |
+        | control + telemetry |
+        +---------------------+
+                  |
+            Native C++ API
+                  |
++----------------------------------------+
+| Canonical IEC 61850 domain / ACSI      |
+| LD/LN/DO/DA · DataSet · RCB · Reports  |
++----------------------------------------+
+                  |
+             DMS services
+                  |
+       +-----------------------+
+       | Session / state       |
+       | request correlation   |
+       +-----------------------+
+          |               |
+       Codec           Trace/events
+   BER/DER/JER          bounded
           |
-     Public C++ API
+    IWireTransport
           |
-+-----------------------------+
-| Canonical IEC 61850 domain  |
-| model + ACSI service model  |
-+-----------------------------+
-      |                 |
- MMS adapter         DMS adapter
- (ARStack)          (this repo)
-                        |
-              +-------------------+
-              | Session / service |
-              +-------------------+
-                 |            |
-              Codec         Trace
-          BER/DER/JER      evidence
-                 |
-           IWireTransport
-                 |
-             WebSocket
+      WebSocket
 ```
 
-The key invariant is that model, DataSet, RCB and report semantics are not owned by the WebSocket layer or by a specific encoding.
+The browser never owns protocol state. Closing or refreshing a browser tab must not stop the DMS server.
 
-## Runtime
+## Runtime workers
 
-The runtime is intentionally split into bounded workers:
+The native runtime is split into bounded execution paths:
 
-- **I/O worker**: socket reads/writes and framing;
-- **decode worker**: wire bytes -> canonical PDU;
-- **service worker**: association/request/report state machines;
-- **observer path**: bounded trace/events for GUI and test tooling.
+- **I/O worker** — WebSocket accept/connect, frame RX/TX;
+- **decode worker** — wire bytes to canonical PDU;
+- **service worker** — association, requests, RCB/report state;
+- **model worker** — serialized mutations to the simulated IED model;
+- **observer/event path** — bounded trace and UI telemetry;
+- **HTTP control plane** — management only; it must not execute protocol work inline.
 
-A slow GUI or trace consumer must not block the protocol service path.
+A slow browser, inspector, logger or trace consumer must not block the DMS service path.
+
+## Headless-first rule
+
+Everything required for testing must be available without a browser:
+
+- start/stop server;
+- inspect health;
+- load/sample a model;
+- mutate simulator values;
+- inspect session state;
+- capture traces;
+- subscribe to report events.
+
+The web UI is a client of that headless API, not the engine itself.
+
+## Server-first milestone
+
+The first complete interoperable endpoint is the server.
+
+```text
+Native model -> DMS service engine -> BER -> WebSocket
+```
+
+The server must be capable of association, discovery and data reads before ARStack integration begins.
 
 ## Client state
 
@@ -60,8 +110,34 @@ Reporting is event driven. A report update enters the application as a `ReportEv
 - reason-for-inclusion per member;
 - values and, when present, quality/timestamp.
 
-A client may choose to verify a report with an explicit read, but that is policy and never a hidden fallback.
+The web UI receives these through a push/event channel. It does not poll `GetDataValues` to imitate reporting.
+
+An explicit verification read may be offered as a diagnostic action, but it is never a hidden fallback.
+
+## ARStack integration boundary
+
+ARStack61850 should not import the browser/control-plane layer.
+
+The integration target is a narrow native adapter:
+
+```text
+ARStack canonical/application layer
+             |
+        IDmsClientAdapter
+             |
+       DMS services
+             |
+        codec/transport
+```
+
+Where practical, common canonical primitives may later move to a small shared library. Until that is justified, keep the repositories decoupled and test them over the wire.
 
 ## Compatibility strategy
 
-The public Netbeheer implementation is treated as a reference endpoint for laboratory interoperability. We will pin exact upstream revisions and keep captured vectors so upstream changes cannot silently redefine our test baseline.
+Netbeheer Nederland's public implementation is treated as:
+
+- a behavioral oracle for the current preliminary profile;
+- a source of attributed public schema/test vectors when licensing permits;
+- an optional external interoperability endpoint.
+
+It is not linked, embedded, spawned, downloaded or required by the native runtime.
