@@ -6,10 +6,12 @@
 #include "ar61850/dms/worker.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace ar61850::dms {
 
@@ -55,6 +57,13 @@ public:
     }
 
     std::vector<TraceEvent> trace_snapshot() const { return trace_.snapshot(); }
+
+    std::optional<IedModel> model_snapshot(
+        std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
+    bool set_float(
+        std::string_view reference,
+        float value,
+        std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
 
 private:
     void on_receive(Bytes payload);
