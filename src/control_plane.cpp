@@ -513,6 +513,49 @@ private:
                 "\",\"value\":" + *value_text + "}");
         }
 
+        if (request->method == "GET" && path == "/api/scenarios") {
+            return response(
+                200,
+                "[{\"id\":\"nominal\",\"label\":\"Nominal\"},"
+                "{\"id\":\"load-step\",\"label\":\"Load step\"},"
+                "{\"id\":\"low-load\",\"label\":\"Low load\"}]");
+        }
+
+        if (request->method == "POST" && path.rfind("/api/scenarios/", 0) == 0) {
+            const auto id = path.substr(std::string("/api/scenarios/").size());
+            std::vector<std::pair<std::string, float>> updates;
+
+            if (id == "nominal") {
+                updates = {
+                    {"LD0/MMXU1.TotW.mag.f", 10.0F},
+                    {"LD0/MMXU1.TotVAr.mag.f", 20.0F},
+                    {"LD0/DWMX1.WMaxSpt.mxVal.f", 6.0F}
+                };
+            } else if (id == "load-step") {
+                updates = {
+                    {"LD0/MMXU1.TotW.mag.f", 125.0F},
+                    {"LD0/MMXU1.TotVAr.mag.f", 35.0F},
+                    {"LD0/DWMX1.WMaxSpt.mxVal.f", 90.0F}
+                };
+            } else if (id == "low-load") {
+                updates = {
+                    {"LD0/MMXU1.TotW.mag.f", 25.0F},
+                    {"LD0/MMXU1.TotVAr.mag.f", 5.0F},
+                    {"LD0/DWMX1.WMaxSpt.mxVal.f", 30.0F}
+                };
+            } else {
+                return response(404, "{\"error\":\"unknown scenario\"}");
+            }
+
+            if (!runtime_.set_float_batch(std::move(updates))) {
+                return response(409, "{\"error\":\"scenario could not be applied\"}");
+            }
+
+            return response(
+                200,
+                "{\"ok\":true,\"scenario\":\"" + json_escape(id) + "\"}");
+        }
+
         if (request->method == "GET" && path == "/") {
             return response(
                 200,
