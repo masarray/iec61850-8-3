@@ -37,7 +37,7 @@ Timestamp deterministic_timestamp() {
         + std::chrono::microseconds{123456};
     t.clock_failure = false;
     t.clock_not_synchronized = false;
-    t.time_accuracy = 3;
+    t.time_accuracy = static_cast<std::uint8_t>(3);
     return t;
 }
 
