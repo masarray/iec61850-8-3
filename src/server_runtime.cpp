@@ -1,6 +1,7 @@
 #include "ar61850/dms/server_runtime.hpp"
 
 #include <exception>
+#include <stdexcept>
 #include <utility>
 
 namespace ar61850::dms {
