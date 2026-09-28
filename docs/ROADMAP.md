@@ -32,8 +32,8 @@ Only after that standalone server is proven do we integrate IEC 61850-8-3 into A
 
 ## P1 — Preliminary DMS BER profile
 
-- [ ] pin public preliminary ASN.1 schema revision
-- [ ] schema provenance manifest + SHA-256
+- [x] pin public preliminary ASN.1 schema revision
+- [~] provenance manifest + upstream git-blob SHA pinned; content SHA-256 when schema is imported
 - [x] canonical TpaaPdu model (typed preliminary subset)
 - [x] BER decoder foundation with strict size/length/depth limits
 - [x] BER encoder foundation
