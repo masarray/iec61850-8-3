@@ -70,8 +70,8 @@ Exit: the repository launches its own server from a clean machine with no Python
 - [x] browser Server workspace
 - [x] browser Inspector workspace
 - [x] health/readiness endpoint
-- [ ] deterministic scenario runner
-- [ ] portable packaging
+- [x] deterministic scenario runner with atomic model batch mutation
+- [~] CI publishes standalone Linux/Windows server artifacts; release packaging remains
 
 Exit: a user can launch one executable/service, open the browser, inspect the IED model, modify simulator values and inspect DMS traffic without Netbeheer.
 
