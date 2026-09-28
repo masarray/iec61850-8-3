@@ -99,6 +99,19 @@ int main() {
         return ready;
     };
 
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!server.transport_connected() &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!server.transport_connected()) {
+            std::cerr << "Passive server did not publish connected state before traffic"
+                      << std::endl;
+            return 3;
+        }
+    }
+
     ProtocolCodec codec;
 
     DmsPdu associate;
