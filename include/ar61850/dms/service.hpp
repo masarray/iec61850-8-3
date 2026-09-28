@@ -49,6 +49,17 @@ struct TriggerOptions {
     bool general_interrogation{false};
 };
 
+struct ReportOptionalFields {
+    bool sequence_number{false};
+    bool timestamp{true};
+    bool data_set{true};
+    bool buffer_overflow{false};
+    bool config_revision{false};
+    bool entry_id{false};
+    bool data_reference{false};
+    bool reason_code{true};
+};
+
 struct ReportControlState {
     ObjectReference reference;
     std::string report_id;
@@ -59,7 +70,15 @@ struct ReportControlState {
     std::uint32_t buffer_time_ms{0};
     std::uint32_t integrity_period_ms{0};
     TriggerOptions triggers{};
+    ReportOptionalFields optional_fields{};
+    std::uint16_t sequence_number{0};
     bool gi{false};
+    bool purge_buffer{false};
+    bool reserved{false};
+    std::int16_t reserved_time_seconds{0};
+    Bytes entry_id{};
+    std::optional<Timestamp> time_of_entry;
+    Bytes owner{};
 };
 
 struct ReportEntry {
