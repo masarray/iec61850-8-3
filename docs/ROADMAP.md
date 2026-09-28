@@ -45,8 +45,8 @@ Exit: our codec can reproduce and decode the pinned laboratory message vectors w
 
 ## P2 — Standalone native DMS server
 
-- [ ] WebSocket transport adapter
-- [ ] IEC server role independent of active/passive WebSocket role
+- [x] WebSocket transport adapter (passive listen + active connect)
+- [x] IEC server role independent of active/passive WebSocket role
 - [x] native association state machine (in-memory ServerCore)
 - [x] GetServerDirectory
 - [x] GetLogicalDeviceDirectory
@@ -56,7 +56,7 @@ Exit: our codec can reproduce and decode the pinned laboratory message vectors w
 - [ ] GetDataValues
 - [x] canonical in-memory IED model
 - [x] deterministic sample IED
-- [ ] server CLI
+- [x] server CLI
 
 Exit: the repository launches its own server from a clean machine with no Python/Netbeheer installation.
 
