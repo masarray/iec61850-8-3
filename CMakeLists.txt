@@ -10,6 +10,7 @@ add_library(ar61850_dms STATIC
     src/protocol_decode.cpp
     src/protocol_encode.cpp
     src/server_core.cpp
+    src/server_runtime.cpp
     src/session.cpp
     src/trace.cpp
     src/worker.cpp
@@ -43,4 +44,8 @@ if(AR61850_DMS_BUILD_TESTS)
   add_executable(ar61850_dms_protocol_tests tests/protocol_tests.cpp)
   target_link_libraries(ar61850_dms_protocol_tests PRIVATE ar61850::dms)
   add_test(NAME ar61850_dms_protocol_tests COMMAND ar61850_dms_protocol_tests)
+
+  add_executable(ar61850_dms_runtime_tests tests/runtime_tests.cpp)
+  target_link_libraries(ar61850_dms_runtime_tests PRIVATE ar61850::dms)
+  add_test(NAME ar61850_dms_runtime_tests COMMAND ar61850_dms_runtime_tests)
 endif()
