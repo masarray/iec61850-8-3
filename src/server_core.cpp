@@ -3,6 +3,102 @@
 #include <algorithm>
 
 namespace ar61850::dms {
+namespace {
+
+DataAttributeDefinition make_attribute_definition(const DataAttributeNode& attr) {
+    DataAttributeDefinition def;
+    def.reference = attr.name;
+    def.fc = attr.fc;
+    def.type = attr.type;
+    for (const auto& child : attr.children) {
+        def.components.push_back(make_attribute_definition(child));
+    }
+    return def;
+}
+
+DataObjectDefinition make_object_definition(const DataObjectNode& object) {
+    DataObjectDefinition def;
+    def.name = object.name;
+    if (!object.cdc.empty()) def.cdc = object.cdc;
+    for (const auto& child : object.children) {
+        def.sub_data_definitions.push_back(make_object_definition(child));
+    }
+    for (const auto& attr : object.attributes) {
+        def.data_attributes.push_back(make_attribute_definition(attr));
+    }
+    return def;
+}
+
+DataAttributeValue make_attribute_value(const DataAttributeNode& attr, bool include_name) {
+    DataAttributeValue value;
+    if (include_name) value.name = attr.name;
+    value.type = attr.type;
+    value.scalar = attr.value;
+    for (const auto& child : attr.children) {
+        value.children.push_back(make_attribute_value(child, include_name));
+    }
+    return value;
+}
+
+bool attribute_matches_fc(const DataAttributeNode& attr, FunctionalConstraint fc) {
+    if (attr.fc == fc) return true;
+    return std::any_of(attr.children.begin(), attr.children.end(),
+        [fc](const auto& child) { return attribute_matches_fc(child, fc); });
+}
+
+DataAttributeValue make_filtered_attribute_value(
+    const DataAttributeNode& attr,
+    FunctionalConstraint fc,
+    bool include_name) {
+    DataAttributeValue value;
+    if (include_name) value.name = attr.name;
+    value.type = attr.type;
+    value.scalar = attr.value;
+    if (attr.type == DataType::Structure) {
+        for (const auto& child : attr.children) {
+            if (attribute_matches_fc(child, fc)) {
+                value.children.push_back(make_filtered_attribute_value(child, fc, include_name));
+            }
+        }
+    }
+    return value;
+}
+
+DataAttributeValue make_data_object_value(
+    const DataObjectNode& object,
+    FunctionalConstraint fc,
+    bool include_name) {
+    DataAttributeValue value;
+    if (include_name) value.name = object.name;
+    value.type = DataType::Structure;
+
+    for (const auto& child_object : object.children) {
+        bool has_matching = false;
+        for (const auto& attr : child_object.attributes) {
+            if (attribute_matches_fc(attr, fc)) { has_matching = true; break; }
+        }
+        if (!has_matching) {
+            for (const auto& nested : child_object.children) {
+                for (const auto& attr : nested.attributes) {
+                    if (attribute_matches_fc(attr, fc)) { has_matching = true; break; }
+                }
+                if (has_matching) break;
+            }
+        }
+        if (has_matching) {
+            value.children.push_back(make_data_object_value(child_object, fc, include_name));
+        }
+    }
+
+    for (const auto& attr : object.attributes) {
+        if (attribute_matches_fc(attr, fc)) {
+            value.children.push_back(make_filtered_attribute_value(attr, fc, include_name));
+        }
+    }
+    return value;
+}
+
+} // namespace
 
 ServerCore::ServerCore(IedModel model, ServerConfig config)
     : model_(std::move(model)), config_(std::move(config)) {}
@@ -106,6 +202,50 @@ std::optional<ber::Bytes> ServerCore::handle(std::span<const std::uint8_t> wire_
         GetDataDirectoryResponse body;
         for (const auto& child : object->children) body.sub_data_objects.push_back(child.name);
         for (const auto& attr : object->attributes) body.data_attributes.push_back(attr.name);
+        rsp.payload = std::move(body);
+        return codec_.encode(rsp);
+    }
+
+    if (request.service == ServiceKind::GetDataDefinition) {
+        const auto& req = std::get<GetDataDefinitionRequest>(request.payload);
+        const auto* object = model_.find_data_object(req.data_reference);
+        if (!object) return codec_.encode(error_for(request, ServiceStatus::InstanceNotAvailable));
+
+        GetDataDefinitionResponse body;
+        if (!object->cdc.empty()) body.cdc = object->cdc;
+        for (const auto& child : object->children) {
+            body.sub_data_definitions.push_back(make_object_definition(child));
+        }
+        for (const auto& attr : object->attributes) {
+            body.data_attributes.push_back(make_attribute_definition(attr));
+        }
+        rsp.payload = std::move(body);
+        return codec_.encode(rsp);
+    }
+
+    if (request.service == ServiceKind::GetDataValues) {
+        const auto& req = std::get<GetDataValuesRequest>(request.payload);
+        GetDataValuesResponse body;
+
+        if (const auto* attr = model_.find_data_attribute(req.ref.reference)) {
+            if (!attribute_matches_fc(*attr, req.ref.fc)) {
+                return codec_.encode(error_for(request, ServiceStatus::ParameterValueInconsistent));
+            }
+            body.data_attribute_values.push_back(
+                make_filtered_attribute_value(*attr, req.ref.fc, req.include_element_name));
+            rsp.payload = std::move(body);
+            return codec_.encode(rsp);
+        }
+
+        const auto* object = model_.find_data_object(req.ref.reference);
+        if (!object) return codec_.encode(error_for(request, ServiceStatus::InstanceNotAvailable));
+
+        const auto object_value = make_data_object_value(
+            *object, req.ref.fc, req.include_element_name);
+        if (object_value.children.empty()) {
+            return codec_.encode(error_for(request, ServiceStatus::InstanceNotAvailable));
+        }
+        body.data_attribute_values = object_value.children;
         rsp.payload = std::move(body);
         return codec_.encode(rsp);
     }
