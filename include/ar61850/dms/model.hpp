@@ -43,6 +43,7 @@ struct LogicalNodeModel {
     std::string name;
     std::vector<DataObjectNode> data_objects;
     std::vector<DataSetModel> data_sets;
+    std::vector<ReportControlState> report_controls;
 };
 
 struct LogicalDeviceModel {
@@ -64,6 +65,10 @@ public:
     const DataAttributeNode* find_data_attribute(std::string_view reference) const noexcept;
     DataAttributeNode* find_data_attribute(std::string_view reference) noexcept;
     const DataSetModel* find_data_set(std::string_view reference) const noexcept;
+    const ReportControlState* find_report_control(
+        std::string_view reference) const noexcept;
+    ReportControlState* find_report_control(
+        std::string_view reference) noexcept;
 
     bool set_float(std::string_view reference, float value) noexcept;
     bool set_float_batch(
