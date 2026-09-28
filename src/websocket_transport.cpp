@@ -100,10 +100,6 @@ public:
         } catch (...) {
         }
 
-        {
-            std::scoped_lock lock(peer_mutex_);
-            passive_peer_.reset();
-        }
         connected_.store(false, std::memory_order_release);
     }
 
@@ -131,11 +127,10 @@ public:
             return client_->bufferedAmount() == 0;
         }
 
-        std::shared_ptr<ix::WebSocket> peer;
-        {
-            std::scoped_lock lock(peer_mutex_);
-            peer = passive_peer_.lock();
-        }
+        if (!server_ || !connected_.load(std::memory_order_acquire)) return false;
+        const auto clients = server_->getClients();
+        if (clients.empty()) return false;
+        const auto& peer = *clients.begin();
         if (!peer) return false;
         const std::string wire(
             reinterpret_cast<const char*>(payload.data()), payload.size());
@@ -163,24 +158,11 @@ private:
             if (level == ix::LogLevel::Error) emit_state(false, message);
         });
 
-        server_->setOnConnectionCallback(
-            [this](std::weak_ptr<ix::WebSocket> weak_websocket,
-                   std::shared_ptr<ix::ConnectionState> state) {
-                (void) state;
-
-                {
-                    std::scoped_lock lock(peer_mutex_);
-                    passive_peer_ = weak_websocket;
-                }
-
-                if (auto websocket = weak_websocket.lock()) {
-                    websocket->setOnMessageCallback(
-                        [this, weak_websocket](const ix::WebSocketMessagePtr& message) {
-                            if (auto peer = weak_websocket.lock()) {
-                                handle_passive_message(*peer, message);
-                            }
-                        });
-                }
+        server_->setOnClientMessageCallback(
+            [this](std::shared_ptr<ix::ConnectionState>,
+                   ix::WebSocket& websocket,
+                   const ix::WebSocketMessagePtr& message) {
+                handle_passive_message(websocket, message);
             });
 
         const auto listen = server_->listen();
@@ -250,27 +232,14 @@ private:
                 return;
             }
 
-            {
-                std::scoped_lock lock(peer_mutex_);
-                if (passive_peer_.expired()) {
-                    websocket.close(1011, "unable to retain WebSocket peer");
-                    emit_state(false, "unable to retain passive peer");
-                    return;
-                }
-            }
             connected_.store(true, std::memory_order_release);
             emit_state(true, "client connected at " + message->openInfo.uri);
             break;
         }
-        case ix::WebSocketMessageType::Close: {
-            {
-                std::scoped_lock lock(peer_mutex_);
-                passive_peer_.reset();
-            }
+        case ix::WebSocketMessageType::Close:
             connected_.store(false, std::memory_order_release);
             emit_state(false, "client disconnected: " + message->closeInfo.reason);
             break;
-        }
         case ix::WebSocketMessageType::Error:
             emit_state(false, "client error: " + message->errorInfo.reason);
             break;
@@ -314,9 +283,6 @@ private:
 
     std::unique_ptr<ix::WebSocketServer> server_;
     std::unique_ptr<ix::WebSocket> client_;
-
-    std::mutex peer_mutex_;
-    std::weak_ptr<ix::WebSocket> passive_peer_;
 
     std::mutex handler_mutex_;
     ReceiveHandler receive_handler_;
