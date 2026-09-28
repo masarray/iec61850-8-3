@@ -77,9 +77,9 @@ Exit: a user can launch one executable/service, open the browser, inspect the IE
 
 ## P4 — DataSets and event-driven reporting
 
-- [ ] DataSet directory and values
-- [ ] RCB state model
-- [ ] Get/Set URCB and BRCB
+- [x] static DataSet discovery, directory and values
+- [ ] RCB state model (next)
+- [ ] Get/Set URCB and BRCB (next)
 - [ ] GI state/evidence
 - [ ] trigger options
 - [ ] unconfirmed report decode/encode
