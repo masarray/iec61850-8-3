@@ -13,6 +13,8 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace ar61850::dms {
 
@@ -70,6 +72,9 @@ public:
     bool set_float(
         std::string_view reference,
         float value,
+        std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
+    bool set_float_batch(
+        std::vector<std::pair<std::string, float>> updates,
         std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
 
 private:
