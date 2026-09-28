@@ -204,6 +204,57 @@ int main() {
     assert(leaf_values.data_attribute_values[0].type == DataType::Float32);
     assert(std::get<float>(leaf_values.data_attribute_values[0].scalar) == 10.0F);
 
+    // P4 DataSet foundation: static directory and values preserve member order.
+    native_req.service = ServiceKind::GetLogicalNodeDirectory;
+    native_req.invoke_id = 6;
+    native_req.payload = GetLogicalNodeDirectoryRequest{
+        .logical_node_reference = "LD0/LLN0",
+        .acsi_class = AcsiClass::DataSet
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto dataset_list_pdu = codec.decode(*wire_rsp);
+    const auto& dataset_list =
+        std::get<GetLogicalNodeDirectoryResponse>(dataset_list_pdu.payload);
+    assert(dataset_list.instance_names.size() == 3);
+    assert(dataset_list.instance_names[0] == "DataSetMinMaxAvg");
+    assert(dataset_list.instance_names[2] == "DataSetActualValues");
+
+    native_req.service = ServiceKind::GetDataSetDirectory;
+    native_req.invoke_id = 7;
+    native_req.payload = GetDataSetDirectoryRequest{
+        .data_set_reference = "LD0/LLN0.DataSetActualValues"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto dataset_directory_pdu = codec.decode(*wire_rsp);
+    assert(dataset_directory_pdu.service == ServiceKind::GetDataSetDirectory);
+    const auto& dataset_directory =
+        std::get<GetDataSetDirectoryResponse>(dataset_directory_pdu.payload);
+    assert(dataset_directory.members.size() == 11);
+    assert(dataset_directory.members[0].reference == "LD0/MMXU1.TotW");
+    assert(dataset_directory.members[0].fc == FunctionalConstraint::MX);
+    assert(dataset_directory.members[10].reference == "LD0/MMXU1.A.phsC");
+
+    native_req.service = ServiceKind::GetDataSetValues;
+    native_req.invoke_id = 8;
+    native_req.payload = GetDataSetValuesRequest{
+        .data_set_reference = "LD0/LLN0.DataSetActualValues"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto dataset_values_pdu = codec.decode(*wire_rsp);
+    assert(dataset_values_pdu.service == ServiceKind::GetDataSetValues);
+    const auto& dataset_values =
+        std::get<GetDataSetValuesResponse>(dataset_values_pdu.payload);
+    assert(dataset_values.member_values.size() == 11);
+    assert(dataset_values.member_values[0].type == DataType::Structure);
+    assert(dataset_values.member_values[0].children.size() == 3);
+    assert(dataset_values.member_values[0].children[0].type == DataType::Structure);
+    assert(dataset_values.member_values[0].children[0].children.size() == 1);
+    assert(std::get<float>(
+        dataset_values.member_values[0].children[0].children[0].scalar) == 10.0F);
+
     // Canonical model exposes nested IEC attributes without dynamic dictionaries.
     {
         auto model = IedModel::make_ft20_reference_model();
