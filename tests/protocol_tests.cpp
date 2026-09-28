@@ -141,6 +141,70 @@ int main() {
     assert(wire_rsp.has_value());
     assert_equal(*wire_rsp, ln_dir_rsp, "native server GetLogicalNodeDirectory");
 
+    // P2 data-definition and live-value services are native and typed.
+    native_req.service = ServiceKind::GetDataDefinition;
+    native_req.invoke_id = 3;
+    native_req.payload = GetDataDefinitionRequest{
+        .data_reference = "LD0/MMXU1.TotW"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto data_definition_pdu = codec.decode(*wire_rsp);
+    assert(data_definition_pdu.service == ServiceKind::GetDataDefinition);
+    const auto& data_definition =
+        std::get<GetDataDefinitionResponse>(data_definition_pdu.payload);
+    assert(data_definition.cdc && *data_definition.cdc == "MV");
+    assert(data_definition.data_attributes.size() == 4);
+    assert(data_definition.data_attributes[0].reference == "mag");
+    assert(data_definition.data_attributes[0].type == DataType::Structure);
+    assert(data_definition.data_attributes[0].components.size() == 1);
+    assert(data_definition.data_attributes[0].components[0].reference == "f");
+    assert(data_definition.data_attributes[0].components[0].type == DataType::Float32);
+
+    native_req.service = ServiceKind::GetDataValues;
+    native_req.invoke_id = 4;
+    native_req.payload = GetDataValuesRequest{
+        .ref = FcdFcdaRef{
+            .reference = "LD0/MMXU1.TotW",
+            .fc = FunctionalConstraint::MX
+        },
+        .include_element_name = true
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto values_pdu = codec.decode(*wire_rsp);
+    assert(values_pdu.service == ServiceKind::GetDataValues);
+    const auto& values = std::get<GetDataValuesResponse>(values_pdu.payload);
+    assert(values.data_attribute_values.size() == 3);
+    assert(values.data_attribute_values[0].name == "mag");
+    assert(values.data_attribute_values[0].type == DataType::Structure);
+    assert(values.data_attribute_values[0].children.size() == 1);
+    assert(values.data_attribute_values[0].children[0].name == "f");
+    assert(values.data_attribute_values[0].children[0].type == DataType::Float32);
+    assert(std::get<float>(values.data_attribute_values[0].children[0].scalar) == 10.0F);
+    assert(values.data_attribute_values[1].name == "q");
+    assert(values.data_attribute_values[1].type == DataType::Quality);
+    assert(values.data_attribute_values[2].name == "t");
+    assert(values.data_attribute_values[2].type == DataType::Timestamp);
+
+    // Direct FCDA reads return the leaf value, not a synthetic polling fallback.
+    native_req.invoke_id = 5;
+    native_req.payload = GetDataValuesRequest{
+        .ref = FcdFcdaRef{
+            .reference = "LD0/MMXU1.TotW.mag.f",
+            .fc = FunctionalConstraint::MX
+        },
+        .include_element_name = true
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    values_pdu = codec.decode(*wire_rsp);
+    const auto& leaf_values = std::get<GetDataValuesResponse>(values_pdu.payload);
+    assert(leaf_values.data_attribute_values.size() == 1);
+    assert(leaf_values.data_attribute_values[0].name == "f");
+    assert(leaf_values.data_attribute_values[0].type == DataType::Float32);
+    assert(std::get<float>(leaf_values.data_attribute_values[0].scalar) == 10.0F);
+
     // Canonical model exposes nested IEC attributes without dynamic dictionaries.
     {
         auto model = IedModel::make_ft20_reference_model();
