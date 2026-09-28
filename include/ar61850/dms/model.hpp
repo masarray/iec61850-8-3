@@ -1,0 +1,52 @@
+#pragma once
+
+#include "ar61850/dms/protocol.hpp"
+
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace ar61850::dms {
+
+struct DataAttributeNode {
+    std::string name;
+    FunctionalConstraint fc{FunctionalConstraint::ST};
+};
+
+struct DataObjectNode {
+    std::string name;
+    std::vector<DataObjectNode> children;
+    std::vector<DataAttributeNode> attributes;
+};
+
+struct LogicalNodeModel {
+    std::string name;
+    std::vector<DataObjectNode> data_objects;
+};
+
+struct LogicalDeviceModel {
+    std::string name;
+    std::vector<LogicalNodeModel> logical_nodes;
+};
+
+class IedModel {
+public:
+    explicit IedModel(std::string ied_name = "IED1");
+
+    const std::string& ied_name() const noexcept { return ied_name_; }
+    std::vector<LogicalDeviceModel>& logical_devices() noexcept { return logical_devices_; }
+    const std::vector<LogicalDeviceModel>& logical_devices() const noexcept { return logical_devices_; }
+
+    const LogicalDeviceModel* find_logical_device(std::string_view name) const noexcept;
+    const LogicalNodeModel* find_logical_node(std::string_view reference) const noexcept;
+    const DataObjectNode* find_data_object(std::string_view reference) const noexcept;
+
+    static IedModel make_ft20_reference_model();
+
+private:
+    std::string ied_name_;
+    std::vector<LogicalDeviceModel> logical_devices_;
+};
+
+} // namespace ar61850::dms
