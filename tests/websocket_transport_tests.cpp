@@ -216,6 +216,17 @@ int main() {
     assert(server.transport_connected());
     assert(server.dropped_messages() == 0);
 
+    const auto trace = server.trace_snapshot();
+    assert(trace.size() >= 8);
+    bool saw_associate = false;
+    bool saw_get_values = false;
+    for (const auto& event : trace) {
+        if (event.service == ServiceKind::Associate) saw_associate = true;
+        if (event.service == ServiceKind::GetDataValues) saw_get_values = true;
+    }
+    assert(saw_associate);
+    assert(saw_get_values);
+
     client.stop();
     server.stop();
     return 0;
