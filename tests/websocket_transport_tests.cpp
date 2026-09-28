@@ -20,6 +20,7 @@ int main() {
     server_ws.host = "127.0.0.1";
     server_ws.port = 0;
     server_ws.access_point = "cp1";
+    server_ws.subprotocol.clear();
     server_ws.automatic_reconnect = false;
 
     auto server_transport = std::make_unique<WebSocketTransport>(server_ws);
@@ -51,6 +52,7 @@ int main() {
     client_ws.host = "127.0.0.1";
     client_ws.port = port;
     client_ws.access_point = "cp1";
+    client_ws.subprotocol.clear();
     client_ws.automatic_reconnect = true;
 
     WebSocketTransport client{client_ws};
