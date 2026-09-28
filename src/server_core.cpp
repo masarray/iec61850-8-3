@@ -192,9 +192,18 @@ std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
         const auto& req = std::get<GetLogicalNodeDirectoryRequest>(request.payload);
         const auto* ln = model_.find_logical_node(req.logical_node_reference);
         if (!ln) return error_for(request, ServiceStatus::InstanceNotAvailable);
-        if (req.acsi_class != AcsiClass::DataObject) return error_for(request, ServiceStatus::ClassNotSupported);
         GetLogicalNodeDirectoryResponse body;
-        for (const auto& object : ln->data_objects) body.instance_names.push_back(object.name);
+        if (req.acsi_class == AcsiClass::DataObject) {
+            for (const auto& object : ln->data_objects) {
+                body.instance_names.push_back(object.name);
+            }
+        } else if (req.acsi_class == AcsiClass::DataSet) {
+            for (const auto& data_set : ln->data_sets) {
+                body.instance_names.push_back(data_set.name);
+            }
+        } else {
+            return error_for(request, ServiceStatus::ClassNotSupported);
+        }
         rsp.payload = std::move(body);
         return rsp;
     }
@@ -250,6 +259,61 @@ std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
             return error_for(request, ServiceStatus::InstanceNotAvailable);
         }
         body.data_attribute_values = object_value.children;
+        rsp.payload = std::move(body);
+        return rsp;
+    }
+
+    if (request.service == ServiceKind::GetDataSetDirectory) {
+        const auto& req = std::get<GetDataSetDirectoryRequest>(request.payload);
+        const auto* data_set = model_.find_data_set(req.data_set_reference);
+        if (!data_set) {
+            return error_for(request, ServiceStatus::InstanceNotAvailable);
+        }
+
+        GetDataSetDirectoryResponse body;
+        body.members.reserve(data_set->members.size());
+        for (const auto& member : data_set->members) {
+            body.members.push_back(FcdFcdaRef{
+                .reference = member.reference,
+                .fc = member.fc
+            });
+        }
+        body.more_follows = false;
+        rsp.payload = std::move(body);
+        return rsp;
+    }
+
+    if (request.service == ServiceKind::GetDataSetValues) {
+        const auto& req = std::get<GetDataSetValuesRequest>(request.payload);
+        const auto* data_set = model_.find_data_set(req.data_set_reference);
+        if (!data_set) {
+            return error_for(request, ServiceStatus::InstanceNotAvailable);
+        }
+
+        GetDataSetValuesResponse body;
+        body.member_values.reserve(data_set->members.size());
+        for (const auto& member : data_set->members) {
+            if (const auto* attr = model_.find_data_attribute(member.reference)) {
+                if (!attribute_matches_fc(*attr, member.fc)) {
+                    return error_for(
+                        request, ServiceStatus::ParameterValueInconsistent);
+                }
+                body.member_values.push_back(
+                    make_filtered_attribute_value(*attr, member.fc, false));
+                continue;
+            }
+
+            const auto* object = model_.find_data_object(member.reference);
+            if (!object) {
+                return error_for(request, ServiceStatus::InstanceNotAvailable);
+            }
+            auto value = make_data_object_value(*object, member.fc, false);
+            if (value.children.empty()) {
+                return error_for(request, ServiceStatus::InstanceNotAvailable);
+            }
+            body.member_values.push_back(std::move(value));
+        }
+
         rsp.payload = std::move(body);
         return rsp;
     }
