@@ -34,12 +34,12 @@ Only after that standalone server is proven do we integrate IEC 61850-8-3 into A
 
 - [ ] pin public preliminary ASN.1 schema revision
 - [ ] schema provenance manifest + SHA-256
-- [ ] canonical TpaaPdu model
-- [ ] BER decoder with strict length/depth limits
-- [ ] BER encoder
-- [ ] associate / release / abort
-- [ ] malformed-message corpus
-- [ ] captured Netbeheer vectors as optional oracle evidence
+- [x] canonical TpaaPdu model (typed preliminary subset)
+- [x] BER decoder foundation with strict size/length/depth limits
+- [x] BER encoder foundation
+- [~] associate request/response implemented; release/abort remain
+- [~] starter malformed/truncation tests; corpus expansion remains
+- [x] captured Netbeheer vectors as optional oracle evidence
 
 Exit: our codec can reproduce and decode the pinned laboratory message vectors without loading Netbeheer code at runtime.
 
@@ -47,15 +47,15 @@ Exit: our codec can reproduce and decode the pinned laboratory message vectors w
 
 - [ ] WebSocket transport adapter
 - [ ] IEC server role independent of active/passive WebSocket role
-- [ ] native association state machine
-- [ ] GetServerDirectory
-- [ ] GetLogicalDeviceDirectory
-- [ ] GetLogicalNodeDirectory
-- [ ] GetDataDirectory
+- [x] native association state machine (in-memory ServerCore)
+- [x] GetServerDirectory
+- [x] GetLogicalDeviceDirectory
+- [x] GetLogicalNodeDirectory (DataObject class)
+- [x] GetDataDirectory
 - [ ] GetDataDefinition
 - [ ] GetDataValues
-- [ ] canonical in-memory IED model
-- [ ] deterministic sample IED
+- [x] canonical in-memory IED model
+- [x] deterministic sample IED
 - [ ] server CLI
 
 Exit: the repository launches its own server from a clean machine with no Python/Netbeheer installation.
