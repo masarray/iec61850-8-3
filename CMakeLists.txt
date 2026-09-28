@@ -3,6 +3,8 @@ project(iec61850_8_3 VERSION 0.1.0 LANGUAGES CXX)
 
 option(AR61850_DMS_BUILD_TESTS "Build AR61850 DMS tests" ON)
 option(AR61850_DMS_BUILD_EXAMPLES "Build AR61850 DMS examples" ON)
+option(AR61850_DMS_BUILD_APPS "Build AR61850 DMS command-line applications" ON)
+option(AR61850_DMS_ENABLE_WEBSOCKET "Build native WebSocket transport" ON)
 
 add_library(ar61850_dms STATIC
     src/ber.cpp
@@ -29,9 +31,36 @@ else()
   target_compile_options(ar61850_dms PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+if(AR61850_DMS_ENABLE_WEBSOCKET)
+  include(FetchContent)
+
+  set(BUILD_DEMO OFF CACHE BOOL "" FORCE)
+  set(USE_TLS OFF CACHE BOOL "" FORCE)
+  set(USE_ZLIB OFF CACHE BOOL "" FORCE)
+  set(USE_TEST OFF CACHE BOOL "" FORCE)
+  set(USE_WS OFF CACHE BOOL "" FORCE)
+  set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
+
+  FetchContent_Declare(
+    ixwebsocket
+    GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
+    GIT_TAG 514a0b968503d758a2954ff9016289f41f489616
+  )
+  FetchContent_MakeAvailable(ixwebsocket)
+
+  target_sources(ar61850_dms PRIVATE src/websocket_transport.cpp)
+  target_link_libraries(ar61850_dms PRIVATE ixwebsocket::ixwebsocket)
+  target_compile_definitions(ar61850_dms PUBLIC AR61850_DMS_HAS_WEBSOCKET=1)
+endif()
+
 if(AR61850_DMS_BUILD_EXAMPLES)
   add_executable(ar61850_dms_loopback examples/loopback/main.cpp)
   target_link_libraries(ar61850_dms_loopback PRIVATE ar61850::dms)
+endif()
+
+if(AR61850_DMS_BUILD_APPS AND AR61850_DMS_ENABLE_WEBSOCKET)
+  add_executable(ar61850_dms_server apps/dms_server/main.cpp)
+  target_link_libraries(ar61850_dms_server PRIVATE ar61850::dms)
 endif()
 
 if(AR61850_DMS_BUILD_TESTS)
@@ -48,4 +77,10 @@ if(AR61850_DMS_BUILD_TESTS)
   add_executable(ar61850_dms_runtime_tests tests/runtime_tests.cpp)
   target_link_libraries(ar61850_dms_runtime_tests PRIVATE ar61850::dms)
   add_test(NAME ar61850_dms_runtime_tests COMMAND ar61850_dms_runtime_tests)
+
+  if(AR61850_DMS_ENABLE_WEBSOCKET)
+    add_executable(ar61850_dms_websocket_tests tests/websocket_transport_tests.cpp)
+    target_link_libraries(ar61850_dms_websocket_tests PRIVATE ar61850::dms)
+    add_test(NAME ar61850_dms_websocket_tests COMMAND ar61850_dms_websocket_tests)
+  endif()
 endif()
