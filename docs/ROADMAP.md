@@ -1,5 +1,25 @@
 # Roadmap
 
+## Product contract
+
+The primary deliverable of this repository is a **standalone IEC 61850-8-3 laboratory server/client engine that runs without the Netbeheer runtime**.
+
+Netbeheer is optional interoperability evidence only. It is never a production/runtime dependency.
+
+The first user-facing milestone is:
+
+```text
+Native DMS engine
+      |
+Headless server
+      |
+Local Web control plane
+      |
+Browser UI
+```
+
+Only after that standalone server is proven do we integrate IEC 61850-8-3 into ARStack61850 and use ARStack as an independent client against this repository's server.
+
 ## P0 — Native core
 
 - [x] C++20 project baseline
@@ -14,30 +34,48 @@
 
 - [ ] pin public preliminary ASN.1 schema revision
 - [ ] schema provenance manifest + SHA-256
-- [ ] TpaaPdu canonical model
+- [ ] canonical TpaaPdu model
 - [ ] BER decoder with strict length/depth limits
 - [ ] BER encoder
 - [ ] associate / release / abort
 - [ ] malformed-message corpus
-- [ ] Netbeheer golden vectors
+- [ ] captured Netbeheer vectors as optional oracle evidence
 
-Exit: byte-compatible association exchange with the pinned reference endpoint.
+Exit: our codec can reproduce and decode the pinned laboratory message vectors without loading Netbeheer code at runtime.
 
-## P2 — Discovery and data access
+## P2 — Standalone native DMS server
 
 - [ ] WebSocket transport adapter
-- [ ] client/server roles independent of active/passive WS role
+- [ ] IEC server role independent of active/passive WebSocket role
+- [ ] native association state machine
 - [ ] GetServerDirectory
 - [ ] GetLogicalDeviceDirectory
 - [ ] GetLogicalNodeDirectory
 - [ ] GetDataDirectory
 - [ ] GetDataDefinition
 - [ ] GetDataValues
-- [ ] model-tree builder
+- [ ] canonical in-memory IED model
+- [ ] deterministic sample IED
+- [ ] server CLI
 
-Exit: native client discovers the Netbeheer FT20 model and native server is discoverable by the Netbeheer client.
+Exit: the repository launches its own server from a clean machine with no Python/Netbeheer installation.
 
-## P3 — DataSets and reporting
+## P3 — Headless Web Lab
+
+- [ ] embedded/local HTTP control plane
+- [ ] server lifecycle API
+- [ ] model/tree API
+- [ ] signal read/mutation API for simulator values
+- [ ] trace streaming API
+- [ ] browser Server workspace
+- [ ] browser Inspector workspace
+- [ ] health/readiness endpoint
+- [ ] deterministic scenario runner
+- [ ] portable packaging
+
+Exit: a user can launch one executable/service, open the browser, inspect the IED model, modify simulator values and inspect DMS traffic without Netbeheer.
+
+## P4 — DataSets and event-driven reporting
 
 - [ ] DataSet directory and values
 - [ ] RCB state model
@@ -45,21 +83,49 @@ Exit: native client discovers the Netbeheer FT20 model and native server is disc
 - [ ] GI state/evidence
 - [ ] trigger options
 - [ ] unconfirmed report decode/encode
-- [ ] event-driven update path
+- [ ] event-driven report stream to web UI
 - [ ] sequence/confRev continuity checks
+- [ ] no hidden cyclic read fallback
 
-Exit: a simulator value change reaches the client through a real report with no cyclic read fallback.
+Exit: a simulator value change reaches a subscribed client through a real report and updates the browser in real time.
 
-## P4 — Lab simulator and workbench API
+## P5 — Native reference client in this repository
 
-- [ ] headless server CLI
 - [ ] headless client CLI
-- [ ] simulator model API
-- [ ] deterministic scenario runner
-- [ ] trace streaming API
-- [ ] Workbench integration
+- [ ] browser Client workspace
+- [ ] discovery/model builder
+- [ ] live values
+- [ ] DataSet browser
+- [ ] Reporting state UX
+- [ ] protocol inspector correlation
 
-## P5 — Standard evolution
+Exit: our own client and server interoperate independently, enabling deterministic self-tests and CI.
+
+## P6 — ARStack61850 integration
+
+- [ ] define a narrow DMS adapter boundary in ARStack61850
+- [ ] reuse/share canonical semantics rather than Web UI code
+- [ ] ARStack DMS client association
+- [ ] ARStack discovery against this repository's native server
+- [ ] GetDataValues parity checks
+- [ ] DataSet parity checks
+- [ ] event-driven reporting parity checks
+- [ ] interoperability regression matrix: ARStack client <-> native DMS server
+- [ ] optional reverse direction when ARStack server support is justified
+
+Exit: ARStack61850 discovers, reads and subscribes to this repository's standalone IEC 61850-8-3 server without Netbeheer in the execution path.
+
+## P7 — External interoperability evidence
+
+- [ ] optional Netbeheer client -> our server
+- [ ] our client -> optional Netbeheer server
+- [ ] pinned external vectors
+- [ ] fault/reconnect tests
+- [ ] performance/latency evidence
+
+Netbeheer remains a test oracle only.
+
+## P8 — Standard evolution
 
 - [ ] JER codec
 - [ ] DER codec
