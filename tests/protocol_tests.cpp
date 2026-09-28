@@ -141,6 +141,43 @@ int main() {
     assert(wire_rsp.has_value());
     assert_equal(*wire_rsp, ln_dir_rsp, "native server GetLogicalNodeDirectory");
 
+    // Association lifecycle is explicit and leaves the server disconnected.
+    DmsPdu release_req;
+    release_req.message_class = MessageClass::Association;
+    release_req.service = ServiceKind::Release;
+    release_req.associate_id = "id_cp1";
+    release_req.invoke_id = 9;
+
+    const auto release_wire = codec.encode(release_req);
+    const auto release_decoded = codec.decode(release_wire);
+    assert(release_decoded.service == ServiceKind::Release);
+    assert(release_decoded.invoke_id && *release_decoded.invoke_id == 9);
+    assert(release_decoded.associate_id == "id_cp1");
+
+    wire_rsp = server.handle(release_wire);
+    assert(wire_rsp.has_value());
+    const auto release_rsp = codec.decode(*wire_rsp);
+    assert(release_rsp.service == ServiceKind::Release);
+    assert(release_rsp.invoke_id && *release_rsp.invoke_id == 9);
+    assert(!server.associated());
+
+    // Re-associate and test abort independently.
+    wire_rsp = server.handle(codec.encode(assoc));
+    assert(wire_rsp.has_value() && server.associated());
+
+    DmsPdu abort_req;
+    abort_req.message_class = MessageClass::Association;
+    abort_req.service = ServiceKind::Abort;
+    abort_req.associate_id = "id_cp1";
+    abort_req.invoke_id = 10;
+
+    wire_rsp = server.handle(codec.encode(abort_req));
+    assert(wire_rsp.has_value());
+    const auto abort_rsp = codec.decode(*wire_rsp);
+    assert(abort_rsp.service == ServiceKind::Abort);
+    assert(abort_rsp.invoke_id && *abort_rsp.invoke_id == 10);
+    assert(!server.associated());
+
     // Hardening: reject indefinite length and truncation.
     bool rejected = false;
     try { codec.decode(hex("a0800000")); } catch (const ber::Error&) { rejected = true; }
