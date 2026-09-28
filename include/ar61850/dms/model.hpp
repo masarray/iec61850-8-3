@@ -27,9 +27,22 @@ struct DataObjectNode {
     std::vector<DataAttributeNode> attributes;
 };
 
+struct DataSetMemberModel {
+    std::string reference;
+    FunctionalConstraint fc{FunctionalConstraint::ST};
+};
+
+struct DataSetModel {
+    std::string name;
+    std::string reference;
+    std::vector<DataSetMemberModel> members;
+    bool deletable{false};
+};
+
 struct LogicalNodeModel {
     std::string name;
     std::vector<DataObjectNode> data_objects;
+    std::vector<DataSetModel> data_sets;
 };
 
 struct LogicalDeviceModel {
@@ -50,6 +63,7 @@ public:
     const DataObjectNode* find_data_object(std::string_view reference) const noexcept;
     const DataAttributeNode* find_data_attribute(std::string_view reference) const noexcept;
     DataAttributeNode* find_data_attribute(std::string_view reference) noexcept;
+    const DataSetModel* find_data_set(std::string_view reference) const noexcept;
 
     bool set_float(std::string_view reference, float value) noexcept;
     bool set_float_batch(
