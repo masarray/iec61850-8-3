@@ -43,6 +43,23 @@ std::optional<ber::Bytes> ServerCore::handle(std::span<const std::uint8_t> wire_
         return codec_.encode(rsp);
     }
 
+    if (request.message_class == MessageClass::Association &&
+        (request.service == ServiceKind::Release || request.service == ServiceKind::Abort)) {
+        if (!request.invoke_id || !validate_association(request)) return std::nullopt;
+
+        DmsPdu rsp;
+        rsp.message_class = MessageClass::Association;
+        rsp.service = request.service;
+        rsp.associate_id = associate_id_;
+        rsp.invoke_id = request.invoke_id;
+        rsp.payload = ServiceError{ServiceStatus::NoError};
+
+        auto wire = codec_.encode(rsp);
+        associated_ = false;
+        associate_id_.clear();
+        return wire;
+    }
+
     if (request.message_class != MessageClass::Request || !request.invoke_id) return std::nullopt;
     if (!validate_association(request)) return codec_.encode(error_for(request, ServiceStatus::AccessNotAllowedInCurrentState));
 
