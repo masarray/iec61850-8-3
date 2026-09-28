@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <mutex>
 #include <stdexcept>
@@ -102,9 +103,10 @@ public:
 
         {
             std::scoped_lock lock(readiness_mutex_);
-            send_ready_after_ = {};
+            application_ready_ = false;
         }
         connected_.store(false, std::memory_order_release);
+        readiness_cv_.notify_all();
     }
 
     bool send(Bytes payload) {
@@ -113,14 +115,18 @@ public:
 
         if (config_.mode == WebSocketMode::ActiveConnect) {
             if (!client_ || !connected_.load(std::memory_order_acquire)) return false;
-            std::chrono::steady_clock::time_point ready_after;
             {
-                std::scoped_lock lock(readiness_mutex_);
-                ready_after = send_ready_after_;
-            }
-            if (ready_after != std::chrono::steady_clock::time_point{} &&
-                std::chrono::steady_clock::now() < ready_after) {
-                std::this_thread::sleep_until(ready_after);
+                std::unique_lock lock(readiness_mutex_);
+                const auto ready = readiness_cv_.wait_for(
+                    lock,
+                    std::chrono::milliseconds(config_.ready_probe_timeout_ms),
+                    [this] {
+                        return application_ready_ ||
+                            !started_.load(std::memory_order_acquire) ||
+                            !client_ ||
+                            client_->getReadyState() != ix::ReadyState::Open;
+                    });
+                if (!ready || !application_ready_) return false;
             }
             if (!connected_.load(std::memory_order_acquire)) return false;
             const std::string wire(
@@ -202,21 +208,36 @@ private:
             if (!message) return;
 
             switch (message->type) {
-            case ix::WebSocketMessageType::Open:
+            case ix::WebSocketMessageType::Open: {
                 {
                     std::scoped_lock lock(readiness_mutex_);
-                    send_ready_after_ = std::chrono::steady_clock::now() +
-                        std::chrono::milliseconds(config_.initial_send_settle_ms);
+                    application_ready_ = false;
                 }
-                connected_.store(true, std::memory_order_release);
-                emit_state(true, "connected " + endpoint_uri());
+                const auto probe = client_->ping("ar61850-ready");
+                if (!probe.success) {
+                    connected_.store(false, std::memory_order_release);
+                    emit_state(false, "WebSocket open but readiness probe send failed");
+                }
+                break;
+            }
+            case ix::WebSocketMessageType::Pong:
+                if (message->str == "ar61850-ready") {
+                    {
+                        std::scoped_lock lock(readiness_mutex_);
+                        application_ready_ = true;
+                    }
+                    connected_.store(true, std::memory_order_release);
+                    readiness_cv_.notify_all();
+                    emit_state(true, "connected " + endpoint_uri());
+                }
                 break;
             case ix::WebSocketMessageType::Close:
                 {
                     std::scoped_lock lock(readiness_mutex_);
-                    send_ready_after_ = {};
+                    application_ready_ = false;
                 }
                 connected_.store(false, std::memory_order_release);
+                readiness_cv_.notify_all();
                 emit_state(false, "closed: " + message->closeInfo.reason);
                 break;
             case ix::WebSocketMessageType::Error:
@@ -312,7 +333,8 @@ private:
     std::unique_ptr<ix::WebSocket> client_;
 
     std::mutex readiness_mutex_;
-    std::chrono::steady_clock::time_point send_ready_after_{};
+    std::condition_variable readiness_cv_;
+    bool application_ready_{false};
 
     std::mutex handler_mutex_;
     ReceiveHandler receive_handler_;
