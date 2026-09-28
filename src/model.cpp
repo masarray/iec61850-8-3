@@ -343,7 +343,8 @@ const DataObjectNode* IedModel::find_data_object(std::string_view reference) con
 
     const DataObjectNode* current = &*first;
     std::size_t index = 1;
-    return descend_object(current, path, index) && index == path.size() ? current : nullptr;
+    current = descend_object(current, path, index);
+    return current && index == path.size() ? current : nullptr;
 }
 
 const DataAttributeNode* IedModel::find_data_attribute(std::string_view reference) const noexcept {
