@@ -22,6 +22,7 @@ struct WebSocketTransportConfig {
     std::string subprotocol{"iec61850-tpaa-ber-v1"};
     bool automatic_reconnect{true};
     std::size_t max_message_size{1024 * 1024};
+    std::uint32_t initial_send_settle_ms{200};
 };
 
 class WebSocketTransport final : public IWireTransport {
