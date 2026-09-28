@@ -98,10 +98,6 @@ public:
         } catch (...) {
         }
 
-        {
-            std::scoped_lock lock(peer_mutex_);
-            passive_peer_ = nullptr;
-        }
         connected_.store(false, std::memory_order_release);
     }
 
@@ -114,19 +110,13 @@ public:
             return client_->sendBinary(payload).success;
         }
 
-        ix::WebSocket* target = nullptr;
-        {
-            std::scoped_lock lock(peer_mutex_);
-            target = passive_peer_;
-        }
-        if (!target || !server_) return false;
+        if (!server_ || !connected_.load(std::memory_order_acquire)) return false;
 
-        // getClients() returns shared_ptr copies, keeping the target alive for this send.
+        // Passive mode is intentionally single-peer. Work only with shared_ptr copies
+        // returned by IXWebSocket so the connection cannot disappear during send().
         const auto clients = server_->getClients();
-        for (const auto& client : clients) {
-            if (client.get() == target) return client->sendBinary(payload).success;
-        }
-        return false;
+        if (clients.size() != 1) return false;
+        return (*clients.begin())->sendBinary(payload).success;
     }
 
 private:
@@ -225,19 +215,11 @@ private:
                 return;
             }
 
-            {
-                std::scoped_lock lock(peer_mutex_);
-                passive_peer_ = &websocket;
-            }
             connected_.store(true, std::memory_order_release);
             emit_state(true, "client connected at " + message->openInfo.uri);
             break;
         }
         case ix::WebSocketMessageType::Close: {
-            {
-                std::scoped_lock lock(peer_mutex_);
-                if (passive_peer_ == &websocket) passive_peer_ = nullptr;
-            }
             connected_.store(false, std::memory_order_release);
             emit_state(false, "client disconnected: " + message->closeInfo.reason);
             break;
@@ -285,9 +267,6 @@ private:
 
     std::unique_ptr<ix::WebSocketServer> server_;
     std::unique_ptr<ix::WebSocket> client_;
-
-    std::mutex peer_mutex_;
-    ix::WebSocket* passive_peer_{nullptr};
 
     std::mutex handler_mutex_;
     ReceiveHandler receive_handler_;
