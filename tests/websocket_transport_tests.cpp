@@ -32,6 +32,14 @@ int main() {
         64,
         128
     };
+    std::mutex server_event_mutex;
+    std::string server_protocol_error;
+    server.set_event_handler([&](const RuntimeEvent& event) {
+        if (event.kind == RuntimeEvent::Kind::DecodeOrServiceError) {
+            std::scoped_lock lock(server_event_mutex);
+            server_protocol_error = event.detail;
+        }
+    });
     server.start();
     const auto port = server_wire->config().port;
     assert(port != 0);
@@ -95,8 +103,14 @@ int main() {
                       << " state='" << last_state_detail << "'"
                       << " server_transport_connected="
                       << (server.transport_connected() ? "true" : "false")
-                      << " traces=" << server.trace_snapshot().size()
-                      << std::endl;
+                      << " traces=" << server.trace_snapshot().size();
+            {
+                std::scoped_lock event_lock(server_event_mutex);
+                if (!server_protocol_error.empty()) {
+                    std::cerr << " protocol_error='" << server_protocol_error << "'";
+                }
+            }
+            std::cerr << std::endl;
         }
         return ready;
     };
