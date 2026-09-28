@@ -51,6 +51,7 @@ if(AR61850_DMS_ENABLE_WEBSOCKET)
   target_sources(ar61850_dms PRIVATE
     src/control_plane.cpp
     src/websocket_transport.cpp
+    src/workbench_page.cpp
   )
   target_link_libraries(ar61850_dms PRIVATE ixwebsocket::ixwebsocket)
   target_compile_definitions(ar61850_dms PUBLIC AR61850_DMS_HAS_WEBSOCKET=1)
@@ -87,7 +88,10 @@ if(AR61850_DMS_BUILD_TESTS)
     add_test(NAME ar61850_dms_websocket_tests COMMAND ar61850_dms_websocket_tests)
 
     add_executable(ar61850_dms_control_plane_tests tests/control_plane_tests.cpp)
-    target_link_libraries(ar61850_dms_control_plane_tests PRIVATE ar61850::dms)
+    target_link_libraries(ar61850_dms_control_plane_tests PRIVATE
+      ar61850::dms
+      ixwebsocket::ixwebsocket
+    )
     add_test(NAME ar61850_dms_control_plane_tests COMMAND ar61850_dms_control_plane_tests)
   endif()
 endif()
