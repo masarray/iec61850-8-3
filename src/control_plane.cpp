@@ -108,6 +108,16 @@ std::string fc_name(FunctionalConstraint fc) {
     return "UNKNOWN";
 }
 
+std::string message_class_name(MessageClass message_class) {
+    switch (message_class) {
+    case MessageClass::Association: return "Association";
+    case MessageClass::Request: return "Request";
+    case MessageClass::Response: return "Response";
+    case MessageClass::Unconfirmed: return "Unconfirmed";
+    }
+    return "Unknown";
+}
+
 std::string service_name(ServiceKind service) {
     switch (service) {
     case ServiceKind::Associate: return "Associate";
@@ -267,6 +277,7 @@ std::string traces_json(const std::vector<TraceEvent>& traces) {
         out << "{\"sequence\":" << e.sequence
             << ",\"epochMs\":" << epoch_ms
             << ",\"direction\":\"" << (e.direction == Direction::Rx ? "RX" : "TX")
+            << "\",\"messageClass\":\"" << message_class_name(e.message_class)
             << "\",\"service\":\"" << service_name(e.service)
             << "\",\"bytes\":" << e.byte_count;
         if (e.invoke_id) out << ",\"invokeId\":" << *e.invoke_id;
