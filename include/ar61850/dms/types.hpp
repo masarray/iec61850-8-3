@@ -41,7 +41,7 @@ struct Timestamp {
 
 struct DataValue;
 using DataArray = std::vector<DataValue>;
-using DataScalar = std::variant<std::monostate, bool, std::int64_t, std::uint64_t, float, double, std::string, Bytes>;
+using DataScalar = std::variant<std::monostate, bool, std::int64_t, std::uint64_t, float, double, std::string, Bytes, Quality, Timestamp>;
 
 struct DataValue {
     std::string name;
