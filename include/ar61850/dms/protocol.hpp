@@ -124,6 +124,24 @@ struct GetDataValuesResponse {
     std::vector<DataAttributeValue> data_attribute_values;
 };
 
+struct GetDataSetDirectoryRequest {
+    std::string data_set_reference;
+    std::optional<FcdFcdaRef> continue_after;
+};
+
+struct GetDataSetDirectoryResponse {
+    std::vector<FcdFcdaRef> members;
+    std::optional<bool> more_follows;
+};
+
+struct GetDataSetValuesRequest {
+    std::string data_set_reference;
+};
+
+struct GetDataSetValuesResponse {
+    std::vector<DataAttributeValue> member_values;
+};
+
 struct ServiceError {
     ServiceStatus status{ServiceStatus::FailedDueToServerConstraint};
 };
@@ -135,6 +153,8 @@ using Payload = std::variant<std::monostate, AssociateRequest, AssociateResponse
     GetDataDirectoryRequest, GetDataDirectoryResponse,
     GetDataDefinitionRequest, GetDataDefinitionResponse,
     GetDataValuesRequest, GetDataValuesResponse,
+    GetDataSetDirectoryRequest, GetDataSetDirectoryResponse,
+    GetDataSetValuesRequest, GetDataSetValuesResponse,
     ServiceError>;
 
 struct DmsPdu {
