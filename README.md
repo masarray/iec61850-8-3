@@ -70,7 +70,9 @@ Captured FT20 BER responses are used as golden interoperability vectors. For the
 
 The P2 read-only standalone server foundation is now in place: native WebSocket transport, association/discovery, GetDataDefinition and GetDataValues run through the real DMS wire path without Python or Netbeheer.
 
-The next product gate is the **P3 Headless Web Lab**: a local control/event API and browser Workbench/Inspector that observes and controls this long-running native server without owning protocol state. DataSets and RCB/reporting follow in P4.
+The P3 Headless Web Lab foundation is now active on the development branch: the same native process serves a compact engineering Workbench with Server, Model, Signals and Protocol Inspector views. The browser remains an observer/control surface; protocol state stays in the native runtime.
+
+The local control plane exposes health/readiness, transport lifecycle, model/tree snapshots, atomic simulator mutations, deterministic scenarios and incremental trace cursors. DataSets and RCB/reporting follow in P4.
 
 See:
 
@@ -91,11 +93,14 @@ See:
 
 ### P3 — headless Web Lab
 
-- local HTTP control plane;
-- model/signal API;
-- trace event stream;
-- Server Workbench and Protocol Inspector;
-- browser lifecycle independent from protocol lifecycle.
+- [x] local HTTP control plane;
+- [x] health/readiness and transport lifecycle API;
+- [x] model/tree and signal mutation API;
+- [x] deterministic atomic simulator scenarios;
+- [x] embedded Server / Model / Signals Workbench;
+- [x] embedded Protocol Inspector with incremental trace cursor;
+- [x] browser lifecycle independent from protocol lifecycle;
+- [~] CI server artifacts are published; release packaging and push-style trace streaming remain.
 
 ### P4 — DataSets and real event-driven reporting
 
@@ -108,6 +113,16 @@ See:
 ### P5/P6 — native client then ARStack61850
 
 First prove our own independent client/server loopback. Then implement the ARStack61850 DMS client adapter and test ARStack against this repository's server.
+
+## Run the headless lab
+
+After building:
+
+```bash
+./build/ar61850_dms_server --mode listen --host 127.0.0.1 --port 8765 --access-point cp1 --http-port 8080
+```
+
+Open `http://127.0.0.1:8080/` for the embedded Workbench. The DMS wire endpoint remains separate at `ws://127.0.0.1:8765/cp1`.
 
 ## Build
 
