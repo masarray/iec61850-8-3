@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ar61850/dms/ber.hpp"
+#include "ar61850/dms/control_plane.hpp"
 #include "ar61850/dms/model.hpp"
 #include "ar61850/dms/protocol.hpp"
 #include "ar61850/dms/server_core.hpp"
