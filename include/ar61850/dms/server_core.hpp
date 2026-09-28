@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace ar61850::dms {
 
@@ -23,6 +24,10 @@ public:
     bool associated() const noexcept { return associated_; }
     const std::string& associate_id() const noexcept { return associate_id_; }
     const IedModel& model() const noexcept { return model_; }
+    IedModel model_snapshot() const { return model_; }
+    bool set_float(std::string_view reference, float value) noexcept {
+        return model_.set_float(reference, value);
+    }
 
 private:
     DmsPdu error_for(const DmsPdu& request, ServiceStatus status) const;
