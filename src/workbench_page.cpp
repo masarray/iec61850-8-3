@@ -206,7 +206,7 @@ tr:hover td{background:#fbfcfd}
         </div>
         <div id="traceWrap" class="tracewrap">
           <table>
-            <thead><tr><th>#</th><th>Time</th><th>Dir</th><th>Service</th><th>Invoke</th><th>Associate</th><th>Bytes</th></tr></thead>
+            <thead><tr><th>#</th><th>Time</th><th>Dir</th><th>Class</th><th>Service</th><th>Invoke</th><th>Associate</th><th>Bytes</th></tr></thead>
             <tbody id="traceRows"></tbody>
           </table>
         </div>
@@ -328,7 +328,7 @@ function renderTraces(){
   const q=$('traceSearch').value.trim().toLowerCase();
   const rows=S.traces.filter(t=>!q||((t.service||'')+' '+(t.direction||'')+' '+(t.associateId||'')).toLowerCase().includes(q));
   $('traceCount').textContent=`${rows.length} shown · last #${S.lastSeq||0}`;
-  $('traceRows').innerHTML=rows.map(t=>`<tr><td class="mono">${t.sequence}</td><td class="mono">${new Date(t.epochMs).toLocaleTimeString()}</td><td><span class="dir ${esc(t.direction)}">${esc(t.direction)}</span></td><td>${esc(t.service)}</td><td class="mono">${t.invokeId??'—'}</td><td class="mono">${esc(t.associateId||'—')}</td><td class="mono">${t.bytes}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">No protocol traffic captured yet.</td></tr>';
+  $('traceRows').innerHTML=rows.map(t=>`<tr><td class="mono">${t.sequence}</td><td class="mono">${new Date(t.epochMs).toLocaleTimeString()}</td><td><span class="dir ${esc(t.direction)}">${esc(t.direction)}</span></td><td><span class="badge">${esc(t.messageClass||'—')}</span></td><td>${esc(t.service)}</td><td class="mono">${t.invokeId??'—'}</td><td class="mono">${esc(t.associateId||'—')}</td><td class="mono">${t.bytes}</td></tr>`).join('')||'<tr><td colspan="8" class="empty">No protocol traffic captured yet.</td></tr>';
   if($('autoFollow').checked){const w=$('traceWrap');w.scrollTop=w.scrollHeight}
 }
 async function pollTraces(){
