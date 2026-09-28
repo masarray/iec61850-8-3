@@ -321,30 +321,38 @@ inline Bytes encode_data_value(const DataAttributeValue& value) {
         return tlv({TagClass::Context, true, 24}, fields);
     }
 
-    Bytes content;
+    if (value.type == DataType::BitString) {
+        Bytes content{0}; // zero unused bits
+        if (const auto* bytes = std::get_if<Bytes>(&value.scalar)) {
+            content.insert(content.end(), bytes->begin(), bytes->end());
+        }
+        return tlv({TagClass::Context, false, 19}, content);
+    }
+
+    Bytes universal;
     switch (value.type) {
     case DataType::Boolean: {
-        const bool b = std::get_if<bool>(&value.scalar) ? std::get<bool>(value.scalar) : false;
-        content.push_back(b ? 0xffU : 0x00U);
+        universal = boolean(std::get_if<bool>(&value.scalar) ? std::get<bool>(value.scalar) : false);
         break;
     }
     case DataType::Int8:
     case DataType::Int16:
     case DataType::Int24:
     case DataType::Int32:
-    case DataType::Int64:
-        content = signed_integer_content(std::get_if<std::int64_t>(&value.scalar) ? std::get<std::int64_t>(value.scalar) : 0);
+    case DataType::Int64: {
+        const auto body = signed_integer_content(
+            std::get_if<std::int64_t>(&value.scalar) ? std::get<std::int64_t>(value.scalar) : 0);
+        universal = tlv({TagClass::Universal, false, 2}, body);
         break;
+    }
     case DataType::UInt8:
     case DataType::UInt16:
     case DataType::UInt24:
     case DataType::UInt32:
-    case DataType::Enumerated: {
-        auto encoded = integer(std::get_if<std::uint64_t>(&value.scalar) ? std::get<std::uint64_t>(value.scalar) : 0);
-        const auto inner = read_one(encoded);
-        content.assign(inner.content.begin(), inner.content.end());
+    case DataType::Enumerated:
+        universal = integer(
+            std::get_if<std::uint64_t>(&value.scalar) ? std::get<std::uint64_t>(value.scalar) : 0);
         break;
-    }
     case DataType::Float32: {
         const float f = std::get_if<float>(&value.scalar) ? std::get<float>(value.scalar) : 0.0F;
         std::ostringstream ss;
@@ -352,27 +360,31 @@ inline Bytes encode_data_value(const DataAttributeValue& value) {
         ss.precision(9);
         ss << f;
         const auto text = ss.str();
-        content.push_back(0x03U);
-        content.insert(content.end(), text.begin(), text.end());
+        Bytes real_content{0x03U}; // BER REAL NR3
+        real_content.insert(real_content.end(), text.begin(), text.end());
+        universal = tlv({TagClass::Universal, false, 9}, real_content);
         break;
     }
     case DataType::VisibleString64:
     case DataType::VisibleString129:
     case DataType::VisibleString255: {
         const auto* str = std::get_if<std::string>(&value.scalar);
-        if (str) content.assign(str->begin(), str->end());
+        universal = utf8(str ? std::string_view(*str) : std::string_view{});
         break;
     }
-    case DataType::OctetString:
-    case DataType::BitString: {
+    case DataType::OctetString: {
         const auto* bytes = std::get_if<Bytes>(&value.scalar);
-        if (bytes) content = *bytes;
+        universal = tlv(
+            {TagClass::Universal, false, 4},
+            bytes ? std::span<const std::uint8_t>(*bytes) : std::span<const std::uint8_t>{});
         break;
     }
     default:
-        break;
+        throw Error("DMS BER: unsupported explicit Data alternative");
     }
-    return tlv({TagClass::Context, false, tag}, content);
+
+    // The preliminary schema uses explicit tags for these Data alternatives.
+    return context_explicit(tag, universal);
 }
 
 inline DataAttributeValue decode_data_value(
@@ -440,29 +452,46 @@ inline DataAttributeValue decode_data_value(
         return out;
     }
 
+    if (out.type == DataType::BitString) {
+        if (data.tag.constructed || data.content.empty()) throw Error("DMS BER: invalid BIT STRING");
+        if (data.content[0] != 0) throw Error("DMS BER: non-octet-aligned BIT STRING unsupported");
+        out.scalar = Bytes(data.content.begin() + 1, data.content.end());
+        return out;
+    }
+
+    if (!data.tag.constructed) throw Error("DMS BER: explicit Data alternative must be constructed");
+    const auto wrapped = children(data, limits, depth + 1);
+    if (wrapped.size() != 1) throw Error("DMS BER: explicit Data alternative child count invalid");
+    const auto& primitive = wrapped.front();
+
     switch (out.type) {
     case DataType::Boolean:
-        if (data.content.size() != 1) throw Error("DMS BER: invalid boolean Data");
-        out.scalar = data.content[0] != 0;
+        require_tag(primitive, TagClass::Universal, false, 1, "boolean");
+        out.scalar = decode_boolean(primitive);
         break;
     case DataType::Int8:
     case DataType::Int16:
     case DataType::Int24:
     case DataType::Int32:
     case DataType::Int64:
-        out.scalar = decode_signed_content(data.content);
+        require_tag(primitive, TagClass::Universal, false, 2, "integer");
+        out.scalar = decode_signed_content(primitive.content);
         break;
     case DataType::UInt8:
     case DataType::UInt16:
     case DataType::UInt24:
     case DataType::UInt32:
     case DataType::Enumerated:
-        out.scalar = decode_unsigned_integer(data);
+        require_tag(primitive, TagClass::Universal, false, 2, "unsigned/enumerated");
+        out.scalar = decode_unsigned_integer(primitive);
         break;
     case DataType::Float32: {
-        if (data.content.empty()) throw Error("DMS BER: empty REAL");
-        if (data.content[0] == 0x03U) {
-            const std::string text(reinterpret_cast<const char*>(data.content.data() + 1), data.content.size() - 1);
+        require_tag(primitive, TagClass::Universal, false, 9, "float32");
+        if (primitive.content.empty()) throw Error("DMS BER: empty REAL");
+        if (primitive.content[0] == 0x03U) {
+            const std::string text(
+                reinterpret_cast<const char*>(primitive.content.data() + 1),
+                primitive.content.size() - 1);
             out.scalar = std::stof(text);
         } else {
             throw Error("DMS BER: unsupported REAL encoding");
@@ -472,14 +501,15 @@ inline DataAttributeValue decode_data_value(
     case DataType::VisibleString64:
     case DataType::VisibleString129:
     case DataType::VisibleString255:
-        out.scalar = decode_string(data);
+        require_tag(primitive, TagClass::Universal, false, 12, "visible string");
+        out.scalar = decode_string(primitive);
         break;
     case DataType::OctetString:
-    case DataType::BitString:
-        out.scalar = Bytes(data.content.begin(), data.content.end());
+        require_tag(primitive, TagClass::Universal, false, 4, "octet string");
+        out.scalar = Bytes(primitive.content.begin(), primitive.content.end());
         break;
     default:
-        break;
+        throw Error("DMS BER: unsupported explicit Data alternative");
     }
     return out;
 }
