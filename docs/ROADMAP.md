@@ -62,14 +62,14 @@ Exit: the repository launches its own server from a clean machine with no Python
 
 ## P3 — Headless Web Lab
 
-- [ ] embedded/local HTTP control plane
-- [ ] server lifecycle API
-- [ ] model/tree API
-- [ ] signal read/mutation API for simulator values
-- [ ] trace streaming API
-- [ ] browser Server workspace
-- [ ] browser Inspector workspace
-- [ ] health/readiness endpoint
+- [x] embedded/local HTTP control plane
+- [x] transport lifecycle API while native runtime remains browser-independent
+- [x] model/tree API
+- [x] signal read/mutation API for simulator values
+- [~] incremental trace cursor API + near-real-time browser follow; push stream remains
+- [x] browser Server workspace
+- [x] browser Inspector workspace
+- [x] health/readiness endpoint
 - [ ] deterministic scenario runner
 - [ ] portable packaging
 
