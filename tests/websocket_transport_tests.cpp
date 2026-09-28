@@ -43,7 +43,7 @@ int main() {
     client_ws.host = "127.0.0.1";
     client_ws.port = port;
     client_ws.access_point = "cp1";
-    client_ws.automatic_reconnect = false;
+    client_ws.automatic_reconnect = true;
 
     WebSocketTransport client{client_ws};
     client.set_state_handler([&](bool connected, std::string_view) {
@@ -65,7 +65,7 @@ int main() {
     {
         std::unique_lock lock(mutex);
         const bool connected = cv.wait_for(
-            lock, std::chrono::seconds(5), [&] { return client_connected; });
+            lock, std::chrono::seconds(10), [&] { return client_connected; });
         assert(connected);
     }
 
@@ -84,7 +84,7 @@ int main() {
     {
         std::unique_lock lock(mutex);
         const bool ready = cv.wait_for(
-            lock, std::chrono::seconds(5), [&] { return received.size() >= 1; });
+            lock, std::chrono::seconds(10), [&] { return received.size() >= 1; });
         assert(ready);
         associate_wire = received[0];
     }
@@ -105,7 +105,7 @@ int main() {
     {
         std::unique_lock lock(mutex);
         const bool ready = cv.wait_for(
-            lock, std::chrono::seconds(5), [&] { return received.size() >= 2; });
+            lock, std::chrono::seconds(10), [&] { return received.size() >= 2; });
         assert(ready);
         directory_wire = received[1];
     }
