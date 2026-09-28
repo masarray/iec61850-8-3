@@ -57,6 +57,22 @@ ber::Bytes encode_data_attribute_values(const std::vector<DataAttributeValue>& v
     return sequence(body);
 }
 
+ber::Bytes encode_fcd_fcda(const FcdFcdaRef& ref) {
+    using namespace ber;
+    Bytes fields;
+    append(fields, explicit_string(0, ref.reference));
+    append(fields, explicit_enum(1, static_cast<std::uint8_t>(ref.fc)));
+    return sequence(fields);
+}
+
+ber::Bytes encode_fcd_fcda_list(const std::vector<FcdFcdaRef>& refs) {
+    using namespace ber;
+    Bytes body;
+    for (const auto& ref : refs) append(body, encode_fcd_fcda(ref));
+    return sequence(body);
+}
+
+
 } // namespace
 
 ProtocolCodec::ProtocolCodec(ber::Limits limits) : limits_(limits) {}
@@ -159,6 +175,21 @@ ber::Bytes ProtocolCodec::encode(const DmsPdu& pdu) const {
             if (req.include_element_name) append(fields, explicit_bool(1, true));
             return encode_request_envelope(pdu, 3, fields);
         }
+        if (pdu.service == ServiceKind::GetDataSetValues) {
+            const auto& req = std::get<GetDataSetValuesRequest>(pdu.payload);
+            Bytes fields;
+            append(fields, explicit_string(0, req.data_set_reference));
+            return encode_request_envelope(pdu, 7, fields);
+        }
+        if (pdu.service == ServiceKind::GetDataSetDirectory) {
+            const auto& req = std::get<GetDataSetDirectoryRequest>(pdu.payload);
+            Bytes fields;
+            append(fields, explicit_string(0, req.data_set_reference));
+            if (req.continue_after) {
+                append(fields, context_explicit(1, encode_fcd_fcda(*req.continue_after)));
+            }
+            return encode_request_envelope(pdu, 11, fields);
+        }
     }
 
     if (pdu.message_class == MessageClass::Response) {
@@ -217,6 +248,19 @@ ber::Bytes ProtocolCodec::encode(const DmsPdu& pdu) const {
             Bytes fields;
             append(fields, context_explicit(0, encode_data_attribute_values(rsp.data_attribute_values)));
             return encode_response_envelope(pdu, 3, fields);
+        }
+        if (pdu.service == ServiceKind::GetDataSetValues) {
+            const auto& rsp = std::get<GetDataSetValuesResponse>(pdu.payload);
+            Bytes fields;
+            append(fields, context_explicit(0, encode_data_attribute_values(rsp.member_values)));
+            return encode_response_envelope(pdu, 7, fields);
+        }
+        if (pdu.service == ServiceKind::GetDataSetDirectory) {
+            const auto& rsp = std::get<GetDataSetDirectoryResponse>(pdu.payload);
+            Bytes fields;
+            append(fields, context_explicit(0, encode_fcd_fcda_list(rsp.members)));
+            if (rsp.more_follows) append(fields, explicit_bool(1, *rsp.more_follows));
+            return encode_response_envelope(pdu, 11, fields);
         }
         if (pdu.service == ServiceKind::GetDataDirectory) {
             const auto& rsp = std::get<GetDataDirectoryResponse>(pdu.payload);
