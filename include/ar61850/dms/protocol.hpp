@@ -142,6 +142,33 @@ struct GetDataSetValuesResponse {
     std::vector<DataAttributeValue> member_values;
 };
 
+struct GetReportControlValuesRequest {
+    std::string reference;
+};
+
+struct GetReportControlValuesResponse {
+    ReportControlState state;
+};
+
+struct SetReportControlValuesRequest {
+    std::string reference;
+    std::optional<std::string> report_id;
+    std::optional<bool> enabled;
+    std::optional<std::string> data_set;
+    std::optional<std::uint32_t> buffer_time_ms;
+    std::optional<std::uint32_t> integrity_period_ms;
+    std::optional<TriggerOptions> triggers;
+    std::optional<ReportOptionalFields> optional_fields;
+    std::optional<bool> gi;
+    std::optional<bool> purge_buffer;
+    std::optional<bool> reserved;
+    std::optional<std::int16_t> reserved_time_seconds;
+};
+
+struct SetReportControlValuesResponse {
+    bool ok{true};
+};
+
 struct ServiceError {
     ServiceStatus status{ServiceStatus::FailedDueToServerConstraint};
 };
@@ -155,6 +182,8 @@ using Payload = std::variant<std::monostate, AssociateRequest, AssociateResponse
     GetDataValuesRequest, GetDataValuesResponse,
     GetDataSetDirectoryRequest, GetDataSetDirectoryResponse,
     GetDataSetValuesRequest, GetDataSetValuesResponse,
+    GetReportControlValuesRequest, GetReportControlValuesResponse,
+    SetReportControlValuesRequest, SetReportControlValuesResponse,
     ServiceError>;
 
 struct DmsPdu {
