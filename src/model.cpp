@@ -404,6 +404,24 @@ bool IedModel::set_float(std::string_view reference, float value) noexcept {
     return true;
 }
 
+bool IedModel::set_float_batch(
+    const std::vector<std::pair<std::string, float>>& updates) noexcept {
+    std::vector<DataAttributeNode*> targets;
+    targets.reserve(updates.size());
+
+    for (const auto& [reference, value] : updates) {
+        (void) value;
+        auto* attr = find_data_attribute(reference);
+        if (!attr || attr->type != DataType::Float32) return false;
+        targets.push_back(attr);
+    }
+
+    for (std::size_t i = 0; i < updates.size(); ++i) {
+        targets[i]->value = updates[i].second;
+    }
+    return true;
+}
+
 IedModel IedModel::make_ft20_reference_model() {
     IedModel model{"IED1"};
 
