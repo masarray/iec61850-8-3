@@ -243,9 +243,10 @@ private:
             case ix::WebSocketMessageType::Error:
                 {
                     std::scoped_lock lock(readiness_mutex_);
-                    send_ready_after_ = {};
+                    application_ready_ = false;
                 }
                 connected_.store(false, std::memory_order_release);
+                readiness_cv_.notify_all();
                 emit_state(false, "error: " + message->errorInfo.reason);
                 break;
             case ix::WebSocketMessageType::Message:
