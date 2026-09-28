@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -47,8 +48,13 @@ public:
     void set_event_handler(EventHandler handler);
     void start();
     void stop() noexcept;
+    bool start_transport();
+    bool stop_transport() noexcept;
 
     bool running() const noexcept { return running_.load(std::memory_order_acquire); }
+    bool transport_active() const noexcept {
+        return transport_active_.load(std::memory_order_acquire);
+    }
     bool transport_connected() const noexcept {
         return transport_connected_.load(std::memory_order_acquire);
     }
@@ -57,6 +63,7 @@ public:
     }
 
     std::vector<TraceEvent> trace_snapshot() const { return trace_.snapshot(); }
+    void clear_trace() { trace_.clear(); }
 
     std::optional<IedModel> model_snapshot(
         std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
@@ -68,17 +75,20 @@ public:
 private:
     void on_receive(Bytes payload);
     void emit(RuntimeEvent::Kind kind, std::string detail = {});
-    void trace_wire(Direction direction, std::size_t bytes);
+    void trace_wire(Direction direction, const DmsPdu& pdu, std::size_t bytes);
 
     ServerCore core_;
+    ProtocolCodec codec_;
     std::unique_ptr<IWireTransport> transport_;
     Worker service_worker_;
     TraceBuffer trace_;
 
     std::atomic<bool> running_{false};
+    std::atomic<bool> transport_active_{false};
     std::atomic<bool> transport_connected_{false};
     std::atomic<std::uint64_t> dropped_messages_{0};
 
+    mutable std::mutex transport_mutex_;
     EventHandler event_handler_;
 };
 
