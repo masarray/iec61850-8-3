@@ -33,3 +33,16 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Upload standalone server
+        uses: actions/upload-artifact@v4
+        with:
+          name: ar61850-dms-server-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/ar61850_dms_server
+            build/Release/ar61850_dms_server.exe
+            README.md
+            LICENSE
+            THIRD_PARTY_NOTICES.md
