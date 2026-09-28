@@ -58,6 +58,30 @@ DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
             return pdu;
         }
 
+        if (service.tag.tag_class == TagClass::Context && service.tag.constructed &&
+            (service.tag.number == 2 || service.tag.number == 3 ||
+             service.tag.number == 4 || service.tag.number == 5)) {
+            const auto fields = service_fields(service, limits_, "association lifecycle");
+            if (fields.size() < 2) throw Error("DMS BER: incomplete release/abort PDU");
+
+            require_tag(fields[0], TagClass::Context, false, 0, "invokeId");
+            const auto invoke = decode_unsigned_integer(fields[0]);
+            if (invoke > std::numeric_limits<std::uint32_t>::max()) {
+                throw Error("DMS BER: lifecycle invokeId overflow");
+            }
+
+            pdu.invoke_id = static_cast<std::uint32_t>(invoke);
+            pdu.associate_id = decode_explicit_string(fields[1], 1, limits_, "associateId");
+            pdu.service = (service.tag.number == 2 || service.tag.number == 3)
+                ? ServiceKind::Release : ServiceKind::Abort;
+
+            // monostate marks request, ServiceError{NoError} marks response.
+            if (service.tag.number == 3 || service.tag.number == 5) {
+                pdu.payload = ServiceError{ServiceStatus::NoError};
+            }
+            return pdu;
+        }
+
         throw Error("DMS BER: unsupported associate service");
     }
 
