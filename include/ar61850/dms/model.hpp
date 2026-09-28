@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ar61850::dms {
@@ -51,6 +52,8 @@ public:
     DataAttributeNode* find_data_attribute(std::string_view reference) noexcept;
 
     bool set_float(std::string_view reference, float value) noexcept;
+    bool set_float_batch(
+        const std::vector<std::pair<std::string, float>>& updates) noexcept;
 
     static IedModel make_ft20_reference_model();
 
