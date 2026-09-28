@@ -1,10 +1,12 @@
 #include "ar61850/dms/control_plane.hpp"
+#include "workbench_page.hpp"
 
 #include <ixwebsocket/IXGetFreePort.h>
 #include <ixwebsocket/IXHttp.h>
 #include <ixwebsocket/IXHttpServer.h>
 #include <ixwebsocket/IXNetSystem.h>
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -326,9 +328,12 @@ ix::HttpResponsePtr response(int status, std::string body, std::string content_t
     ix::WebSocketHttpHeaders headers;
     headers["Content-Type"] = std::move(content_type);
     headers["Cache-Control"] = "no-store";
-    headers["Access-Control-Allow-Origin"] = "*";
-    headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
-    headers["Access-Control-Allow-Headers"] = "Content-Type";
+    headers["X-Content-Type-Options"] = "nosniff";
+    headers["X-Frame-Options"] = "DENY";
+    headers["Content-Security-Policy"] =
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; connect-src 'self'; "
+        "img-src 'self' data:; frame-ancestors 'none'";
     return std::make_shared<ix::HttpResponse>(
         status,
         status >= 200 && status < 300 ? "OK" : "Error",
@@ -399,14 +404,13 @@ public:
 private:
     ix::HttpResponsePtr handle(ix::HttpRequestPtr request) {
         if (!request) return response(400, "{\"error\":\"invalid request\"}");
-        if (request->method == "OPTIONS") return response(204, "");
-
         const auto path = path_only(request->uri);
 
         if (request->method == "GET" && path == "/api/health") {
             std::ostringstream out;
             out << "{\"ok\":true"
                 << ",\"runtimeRunning\":" << (runtime_.running() ? "true" : "false")
+                << ",\"transportActive\":" << (runtime_.transport_active() ? "true" : "false")
                 << ",\"transportConnected\":" << (runtime_.transport_connected() ? "true" : "false")
                 << ",\"droppedMessages\":" << runtime_.dropped_messages()
                 << ",\"traceCount\":" << runtime_.trace_snapshot().size()
@@ -421,7 +425,68 @@ private:
         }
 
         if (request->method == "GET" && path == "/api/traces") {
-            return response(200, traces_json(runtime_.trace_snapshot()));
+            const auto after_text = query_value(request->uri, "after");
+            const auto limit_text = query_value(request->uri, "limit");
+
+            std::uint64_t after = 0;
+            std::size_t limit = 1000;
+            if (after_text) {
+                const auto parsed = std::from_chars(
+                    after_text->data(), after_text->data() + after_text->size(), after);
+                if (parsed.ec != std::errc{} ||
+                    parsed.ptr != after_text->data() + after_text->size()) {
+                    return response(400, "{\"error\":\"invalid after sequence\"}");
+                }
+            }
+            if (limit_text) {
+                std::uint64_t parsed_limit = 0;
+                const auto parsed = std::from_chars(
+                    limit_text->data(), limit_text->data() + limit_text->size(), parsed_limit);
+                if (parsed.ec != std::errc{} ||
+                    parsed.ptr != limit_text->data() + limit_text->size() ||
+                    parsed_limit == 0) {
+                    return response(400, "{\"error\":\"invalid trace limit\"}");
+                }
+                limit = static_cast<std::size_t>(std::min<std::uint64_t>(parsed_limit, 2000));
+            }
+
+            auto traces = runtime_.trace_snapshot();
+            traces.erase(
+                std::remove_if(
+                    traces.begin(), traces.end(),
+                    [after](const TraceEvent& event) { return event.sequence <= after; }),
+                traces.end());
+            if (traces.size() > limit) {
+                traces.erase(
+                    traces.begin(),
+                    traces.begin() + static_cast<std::ptrdiff_t>(traces.size() - limit));
+            }
+            return response(200, traces_json(traces));
+        }
+
+        if (request->method == "POST" && path == "/api/traces/clear") {
+            runtime_.clear_trace();
+            return response(200, "{\"ok\":true}");
+        }
+
+        if (request->method == "POST" && path == "/api/runtime/transport/start") {
+            try {
+                if (!runtime_.start_transport()) {
+                    return response(409, "{\"error\":\"runtime is not running\"}");
+                }
+                return response(200, "{\"ok\":true,\"transportActive\":true}");
+            } catch (const std::exception& ex) {
+                return response(
+                    500,
+                    "{\"error\":\"" + json_escape(ex.what()) + "\"}");
+            }
+        }
+
+        if (request->method == "POST" && path == "/api/runtime/transport/stop") {
+            if (!runtime_.stop_transport()) {
+                return response(500, "{\"error\":\"transport stop failed\"}");
+            }
+            return response(200, "{\"ok\":true,\"transportActive\":false}");
         }
 
         if (request->method == "POST" && path == "/api/signals/float") {
@@ -449,20 +514,10 @@ private:
         }
 
         if (request->method == "GET" && path == "/") {
-            static const std::string page =
-                "<!doctype html><html><head><meta charset='utf-8'>"
-                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<title>AR61850 DMS Lab</title></head><body>"
-                "<main style='font:14px system-ui;max-width:760px;margin:48px auto;padding:0 20px'>"
-                "<h1 style='font-size:22px;font-weight:600'>AR61850 DMS Lab</h1>"
-                "<p>Native headless IEC 61850-8-3 server is running.</p>"
-                "<p><a href='/api/health'>Health</a> &middot; "
-                "<a href='/api/model'>Model</a> &middot; "
-                "<a href='/api/traces'>Traces</a></p>"
-                "<p style='color:#667085'>Workbench UI follows in the next P3 slice. "
-                "Protocol state remains in the native server process.</p>"
-                "</main></body></html>";
-            return response(200, page, "text/html; charset=utf-8");
+            return response(
+                200,
+                std::string(workbench_page_html()),
+                "text/html; charset=utf-8");
         }
 
         return response(404, "{\"error\":\"not found\"}");
