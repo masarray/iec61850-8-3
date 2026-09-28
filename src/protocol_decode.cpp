@@ -3,6 +3,114 @@
 namespace ar61850::dms {
 using namespace detail;
 
+namespace {
+
+DataAttributeDefinition decode_da_definition(const ber::Tlv& seq, const ber::Limits& limits) {
+    using namespace ber;
+    require_tag(seq, TagClass::Universal, true, 16, "DataAttributeDefinition");
+    DataAttributeDefinition out;
+    for (const auto& field : children(seq, limits, 4)) {
+        if (field.tag == Tag{TagClass::Context, true, 0}) {
+            out.reference = decode_explicit_string(field, 0, limits, "daRef");
+        } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+            out.fc = static_cast<FunctionalConstraint>(decode_explicit_enum(field, 1, limits, "fc"));
+        } else if (field.tag == Tag{TagClass::Context, true, 2}) {
+            const auto inner = children(field, limits, 5);
+            if (inner.size() != 1) throw Error("DMS BER: invalid daType");
+            auto type = decode_type_spec(inner.front(), limits, 6);
+            type.reference = out.reference;
+            type.fc = out.fc;
+            out.type = type.type;
+            out.size = type.size;
+            out.components = std::move(type.components);
+        }
+    }
+    return out;
+}
+
+std::vector<DataAttributeDefinition> decode_da_definition_list(
+    const ber::Tlv& explicit_field,
+    std::uint32_t tag,
+    const ber::Limits& limits,
+    const char* label) {
+    using namespace ber;
+    const auto list = unwrap_explicit(explicit_field, tag, limits, label);
+    require_tag(list, TagClass::Universal, true, 16, label);
+    std::vector<DataAttributeDefinition> result;
+    for (const auto& item : children(list, limits, 5)) {
+        result.push_back(decode_da_definition(item, limits));
+    }
+    return result;
+}
+
+DataObjectDefinition decode_do_definition(const ber::Tlv& seq, const ber::Limits& limits) {
+    using namespace ber;
+    require_tag(seq, TagClass::Universal, true, 16, "DataObjectDefinition");
+    DataObjectDefinition out;
+    for (const auto& field : children(seq, limits, 5)) {
+        if (field.tag == Tag{TagClass::Context, true, 0}) {
+            out.name = decode_explicit_string(field, 0, limits, "name");
+        } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+            out.cdc = decode_explicit_string(field, 1, limits, "cdc");
+        } else if (field.tag == Tag{TagClass::Context, true, 2}) {
+            out.count = static_cast<std::int32_t>(decode_explicit_integer(field, 2, limits, "count"));
+        } else if (field.tag == Tag{TagClass::Context, true, 3}) {
+            const auto list = unwrap_explicit(field, 3, limits, "subDataDefinition");
+            require_tag(list, TagClass::Universal, true, 16, "subDataDefinition");
+            for (const auto& item : children(list, limits, 6)) {
+                out.sub_data_definitions.push_back(decode_do_definition(item, limits));
+            }
+        } else if (field.tag == Tag{TagClass::Context, true, 4}) {
+            out.data_attributes = decode_da_definition_list(field, 4, limits, "dataAttributeDefinition");
+        }
+    }
+    return out;
+}
+
+std::vector<DataObjectDefinition> decode_do_definition_list(
+    const ber::Tlv& explicit_field,
+    std::uint32_t tag,
+    const ber::Limits& limits,
+    const char* label) {
+    using namespace ber;
+    const auto list = unwrap_explicit(explicit_field, tag, limits, label);
+    require_tag(list, TagClass::Universal, true, 16, label);
+    std::vector<DataObjectDefinition> result;
+    for (const auto& item : children(list, limits, 5)) {
+        result.push_back(decode_do_definition(item, limits));
+    }
+    return result;
+}
+
+std::vector<DataAttributeValue> decode_data_attribute_values(
+    const ber::Tlv& explicit_field,
+    const ber::Limits& limits) {
+    using namespace ber;
+    const auto list = unwrap_explicit(explicit_field, 0, limits, "dataAttrVal");
+    require_tag(list, TagClass::Universal, true, 16, "dataAttrVal");
+    std::vector<DataAttributeValue> result;
+    for (const auto& item : children(list, limits, 5)) {
+        require_tag(item, TagClass::Universal, true, 16, "DataAttributeValue");
+        std::string name;
+        std::optional<DataAttributeValue> value;
+        for (const auto& field : children(item, limits, 6)) {
+            if (field.tag == Tag{TagClass::Context, true, 0}) {
+                name = decode_explicit_string(field, 0, limits, "DataAttributeValue.name");
+            } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+                const auto inner = children(field, limits, 7);
+                if (inner.size() != 1) throw Error("DMS BER: invalid DataAttributeValue.data");
+                value = decode_data_value(inner.front(), limits, 8);
+            }
+        }
+        if (!value) throw Error("DMS BER: DataAttributeValue missing data");
+        value->name = std::move(name);
+        result.push_back(std::move(*value));
+    }
+    return result;
+}
+
+} // namespace
+
 DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
     using namespace ber;
     const auto outer = read_one(bytes, limits_);
@@ -156,6 +264,21 @@ DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
             return pdu;
         }
 
+        if (service.tag == Tag{TagClass::Context, true, 6}) {
+            pdu.service = ServiceKind::GetDataDefinition;
+            const auto fields = service_fields(service, limits_, "getDataDefinition");
+            GetDataDefinitionRequest req;
+            for (const auto& field : fields) {
+                if (field.tag == Tag{TagClass::Context, true, 0}) {
+                    req.data_reference = decode_explicit_string(field, 0, limits_, "dataRef");
+                } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+                    req.continue_after = decode_explicit_string(field, 1, limits_, "continueAfter");
+                }
+            }
+            pdu.payload = std::move(req);
+            return pdu;
+        }
+
         if (service.tag == Tag{TagClass::Context, true, 3}) {
             pdu.service = ServiceKind::GetDataValues;
             const auto fields = service_fields(service, limits_, "getDataValues");
@@ -261,6 +384,42 @@ DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
                 } else if (field.tag == Tag{TagClass::Context, true, 2}) {
                     rsp.more_follows = decode_explicit_bool(
                         field, 2, limits_, "moreFollows");
+                }
+            }
+            pdu.payload = std::move(rsp);
+            return pdu;
+        }
+
+        if (service.tag == Tag{TagClass::Context, true, 6}) {
+            pdu.service = ServiceKind::GetDataDefinition;
+            const auto fields = service_fields(service, limits_, "getDataDefinitionResponse");
+            GetDataDefinitionResponse rsp;
+            for (const auto& field : fields) {
+                if (field.tag == Tag{TagClass::Context, true, 0}) {
+                    rsp.cdc = decode_explicit_string(field, 0, limits_, "cdc");
+                } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+                    rsp.count = static_cast<std::int32_t>(decode_explicit_integer(field, 1, limits_, "count"));
+                } else if (field.tag == Tag{TagClass::Context, true, 2}) {
+                    rsp.sub_data_definitions = decode_do_definition_list(
+                        field, 2, limits_, "subDataDefinition");
+                } else if (field.tag == Tag{TagClass::Context, true, 3}) {
+                    rsp.data_attributes = decode_da_definition_list(
+                        field, 3, limits_, "dataAttributeDefinition");
+                } else if (field.tag == Tag{TagClass::Context, true, 4}) {
+                    rsp.more_follows = decode_explicit_bool(field, 4, limits_, "moreFollows");
+                }
+            }
+            pdu.payload = std::move(rsp);
+            return pdu;
+        }
+
+        if (service.tag == Tag{TagClass::Context, true, 3}) {
+            pdu.service = ServiceKind::GetDataValues;
+            const auto fields = service_fields(service, limits_, "getDataValuesResponse");
+            GetDataValuesResponse rsp;
+            for (const auto& field : fields) {
+                if (field.tag == Tag{TagClass::Context, true, 0}) {
+                    rsp.data_attribute_values = decode_data_attribute_values(field, limits_);
                 }
             }
             pdu.payload = std::move(rsp);
