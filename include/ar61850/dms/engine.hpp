@@ -11,3 +11,4 @@
 #include "ar61850/dms/transport.hpp"
 #include "ar61850/dms/types.hpp"
 #include "ar61850/dms/worker.hpp"
+#include "ar61850/dms/websocket_transport.hpp"
