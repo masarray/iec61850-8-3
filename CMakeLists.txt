@@ -5,6 +5,11 @@ option(AR61850_DMS_BUILD_TESTS "Build AR61850 DMS tests" ON)
 option(AR61850_DMS_BUILD_EXAMPLES "Build AR61850 DMS examples" ON)
 
 add_library(ar61850_dms STATIC
+    src/ber.cpp
+    src/model.cpp
+    src/protocol_decode.cpp
+    src/protocol_encode.cpp
+    src/server_core.cpp
     src/session.cpp
     src/trace.cpp
     src/worker.cpp
@@ -30,7 +35,12 @@ endif()
 
 if(AR61850_DMS_BUILD_TESTS)
   enable_testing()
+
   add_executable(ar61850_dms_tests tests/core_tests.cpp)
   target_link_libraries(ar61850_dms_tests PRIVATE ar61850::dms)
   add_test(NAME ar61850_dms_tests COMMAND ar61850_dms_tests)
+
+  add_executable(ar61850_dms_protocol_tests tests/protocol_tests.cpp)
+  target_link_libraries(ar61850_dms_protocol_tests PRIVATE ar61850::dms)
+  add_test(NAME ar61850_dms_protocol_tests COMMAND ar61850_dms_protocol_tests)
 endif()
