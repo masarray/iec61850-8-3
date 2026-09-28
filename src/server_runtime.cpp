@@ -130,6 +130,30 @@ bool ServerRuntime::set_float(
     }
 }
 
+bool ServerRuntime::set_float_batch(
+    std::vector<std::pair<std::string, float>> updates,
+    std::chrono::milliseconds timeout) {
+    if (!running() || updates.empty()) return false;
+
+    auto promise = std::make_shared<std::promise<bool>>();
+    auto future = promise->get_future();
+    const bool accepted = service_worker_.post(
+        [this, promise, updates = std::move(updates)]() mutable {
+            try {
+                promise->set_value(core_.set_float_batch(updates));
+            } catch (...) {
+                promise->set_exception(std::current_exception());
+            }
+        });
+    if (!accepted) return false;
+    if (future.wait_for(timeout) != std::future_status::ready) return false;
+    try {
+        return future.get();
+    } catch (...) {
+        return false;
+    }
+}
+
 void ServerRuntime::on_receive(Bytes payload) {
     if (!running()) return;
 
