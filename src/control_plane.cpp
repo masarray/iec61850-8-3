@@ -303,6 +303,99 @@ void append_report_controls_json(
     out << ']';
 }
 
+
+std::string data_attribute_value_json(const DataAttributeValue& value) {
+    std::ostringstream out;
+    out << "{\"name\":\"" << json_escape(value.name)
+        << "\",\"type\":\"" << data_type_name(value.type)
+        << "\",\"value\":" << scalar_json(value.scalar)
+        << ",\"children\":[";
+    bool first = true;
+    for (const auto& child : value.children) {
+        if (!first) out << ',';
+        first = false;
+        out << data_attribute_value_json(child);
+    }
+    out << "]}";
+    return out.str();
+}
+
+std::string report_reason_json(const ReasonForInclusion& reason) {
+    std::ostringstream out;
+    out << "{\"dchg\":" << (reason.data_change ? "true" : "false")
+        << ",\"qchg\":" << (reason.quality_change ? "true" : "false")
+        << ",\"dupd\":" << (reason.data_update ? "true" : "false")
+        << ",\"integrity\":" << (reason.integrity ? "true" : "false")
+        << ",\"gi\":" << (reason.general_interrogation ? "true" : "false")
+        << ",\"app\":" << (reason.application_trigger ? "true" : "false")
+        << '}';
+    return out.str();
+}
+
+std::string reports_json(const std::vector<ObservedReport>& reports) {
+    static constexpr char hex[] = "0123456789abcdef";
+    std::ostringstream out;
+    out << '[';
+    bool first_report = true;
+    for (const auto& observed : reports) {
+        if (!first_report) out << ',';
+        first_report = false;
+        const auto epoch_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                observed.observed_at.time_since_epoch()).count();
+        const auto& report = observed.report;
+
+        std::string entry_id;
+        entry_id.reserve(report.entry_id.size() * 2);
+        for (const auto byte : report.entry_id) {
+            entry_id.push_back(hex[(byte >> 4) & 0x0fU]);
+            entry_id.push_back(hex[byte & 0x0fU]);
+        }
+
+        out << "{\"sequence\":" << observed.sequence
+            << ",\"epochMs\":" << epoch_ms
+            << ",\"rptId\":\"" << json_escape(report.report_id) << "\""
+            << ",\"subSqNum\":" << report.sub_sequence_number
+            << ",\"moreSegmentsFollow\":"
+            << (report.more_segments_follow ? "true" : "false")
+            << ",\"bufOvfl\":" << (report.buffer_overflow ? "true" : "false")
+            << ",\"entryId\":\"" << entry_id << "\"";
+        if (report.sequence_number) {
+            out << ",\"sqNum\":" << *report.sequence_number;
+        }
+        if (report.conf_rev) out << ",\"confRev\":" << *report.conf_rev;
+        if (report.data_set) {
+            out << ",\"dataSet\":\""
+                << json_escape(*report.data_set) << "\"";
+        }
+        out << ",\"entries\":[";
+        bool first_entry = true;
+        for (const auto& entry : report.entries) {
+            if (!first_entry) out << ',';
+            first_entry = false;
+            out << "{\"ref\":\"" << json_escape(entry.data_reference)
+                << "\",\"reason\":" << report_reason_json(entry.reason)
+                << ",\"values\":[";
+            bool first_value = true;
+            for (const auto& value : entry.values) {
+                if (!first_value) out << ',';
+                first_value = false;
+                out << data_attribute_value_json(value);
+            }
+            out << "]}";
+        }
+        out << "]}";
+    }
+    out << ']';
+    return out.str();
+}
+
+std::optional<bool> parse_bool_text(std::string_view value) {
+    if (value == "1" || value == "true" || value == "on") return true;
+    if (value == "0" || value == "false" || value == "off") return false;
+    return std::nullopt;
+}
+
 std::string model_json(const IedModel& model) {
     std::ostringstream out;
     out << "{\"ied\":\"" << json_escape(model.ied_name()) << "\",\"logicalDevices\":[";
@@ -492,6 +585,7 @@ private:
                 << ",\"transportConnected\":" << (runtime_.transport_connected() ? "true" : "false")
                 << ",\"droppedMessages\":" << runtime_.dropped_messages()
                 << ",\"traceCount\":" << runtime_.trace_snapshot().size()
+                << ",\"reportCount\":" << runtime_.report_snapshot().size()
                 << '}';
             return response(200, out.str());
         }
@@ -500,6 +594,56 @@ private:
             const auto model = runtime_.model_snapshot();
             if (!model) return response(503, "{\"error\":\"model unavailable\"}");
             return response(200, model_json(*model));
+        }
+
+        if (request->method == "GET" && path == "/api/reports") {
+            const auto after_text = query_value(request->uri, "after");
+            const auto limit_text = query_value(request->uri, "limit");
+
+            std::uint64_t after = 0;
+            std::size_t limit = 500;
+            if (after_text) {
+                const auto parsed = std::from_chars(
+                    after_text->data(), after_text->data() + after_text->size(), after);
+                if (parsed.ec != std::errc{} ||
+                    parsed.ptr != after_text->data() + after_text->size()) {
+                    return response(400, "{\"error\":\"invalid report cursor\"}");
+                }
+            }
+            if (limit_text) {
+                std::uint64_t parsed_limit = 0;
+                const auto parsed = std::from_chars(
+                    limit_text->data(), limit_text->data() + limit_text->size(),
+                    parsed_limit);
+                if (parsed.ec != std::errc{} ||
+                    parsed.ptr != limit_text->data() + limit_text->size() ||
+                    parsed_limit == 0) {
+                    return response(400, "{\"error\":\"invalid report limit\"}");
+                }
+                limit = static_cast<std::size_t>(
+                    std::min<std::uint64_t>(parsed_limit, 2000));
+            }
+
+            auto reports = runtime_.report_snapshot();
+            reports.erase(
+                std::remove_if(
+                    reports.begin(), reports.end(),
+                    [after](const ObservedReport& item) {
+                        return item.sequence <= after;
+                    }),
+                reports.end());
+            if (reports.size() > limit) {
+                reports.erase(
+                    reports.begin(),
+                    reports.begin() +
+                        static_cast<std::ptrdiff_t>(reports.size() - limit));
+            }
+            return response(200, reports_json(reports));
+        }
+
+        if (request->method == "POST" && path == "/api/reports/clear") {
+            runtime_.clear_reports();
+            return response(200, "{\"ok\":true}");
         }
 
         if (request->method == "GET" && path == "/api/traces") {
@@ -589,6 +733,68 @@ private:
                 200,
                 "{\"ok\":true,\"ref\":\"" + json_escape(*ref) +
                 "\",\"value\":" + *value_text + "}");
+        }
+
+        if (request->method == "POST" && path == "/api/signals/quality") {
+            const auto ref = query_value(request->uri, "ref");
+            const auto validity_text = query_value(request->uri, "validity");
+            if (!ref || !validity_text) {
+                return response(
+                    400,
+                    "{\"error\":\"ref and validity are required\"}");
+            }
+
+            Quality quality;
+            if (*validity_text == "good") {
+                quality.validity = Validity::Good;
+            } else if (*validity_text == "invalid") {
+                quality.validity = Validity::Invalid;
+            } else if (*validity_text == "reserved") {
+                quality.validity = Validity::Reserved;
+            } else if (*validity_text == "questionable") {
+                quality.validity = Validity::Questionable;
+            } else {
+                return response(
+                    400,
+                    "{\"error\":\"invalid validity value\"}");
+            }
+
+            if (const auto source = query_value(request->uri, "source")) {
+                if (*source == "process") {
+                    quality.source = Source::Process;
+                } else if (*source == "substituted") {
+                    quality.source = Source::Substituted;
+                } else {
+                    return response(
+                        400,
+                        "{\"error\":\"invalid quality source\"}");
+                }
+            }
+
+            if (const auto test = query_value(request->uri, "test")) {
+                const auto parsed = parse_bool_text(*test);
+                if (!parsed) {
+                    return response(400, "{\"error\":\"invalid test flag\"}");
+                }
+                quality.test = *parsed;
+            }
+            if (const auto blocked = query_value(request->uri, "blocked")) {
+                const auto parsed = parse_bool_text(*blocked);
+                if (!parsed) {
+                    return response(400, "{\"error\":\"invalid blocked flag\"}");
+                }
+                quality.operator_blocked = *parsed;
+            }
+
+            if (!runtime_.set_quality(*ref, quality)) {
+                return response(
+                    404,
+                    "{\"error\":\"signal not found or not quality\"}");
+            }
+            return response(
+                200,
+                "{\"ok\":true,\"ref\":\"" +
+                    json_escape(*ref) + "\"}");
         }
 
         if (request->method == "GET" && path == "/api/scenarios") {
