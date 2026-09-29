@@ -574,6 +574,90 @@ int main() {
     assert(wire_rsp.has_value());
     assert(server.buffered_report_count("LD0/LLN0.rcbMinMaxAvg") == 0);
 
+    // DataSet changes advance ConfRev; a stale BRCB cursor is rejected.
+    native_req.invoke_id = 33;
+    SetReportControlValuesRequest reconfigure_brcb;
+    reconfigure_brcb.reference = "LD0/LLN0.rcbMinMaxAvg";
+    reconfigure_brcb.enabled = false;
+    reconfigure_brcb.data_set = "LD0/LLN0.DataSetSetpoints";
+    native_req.payload = reconfigure_brcb;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+
+    native_req.service = ServiceKind::GetBrcbValues;
+    native_req.invoke_id = 34;
+    native_req.payload = GetReportControlValuesRequest{
+        .reference = "LD0/LLN0.rcbMinMaxAvg"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto reconfigured_brcb = codec.decode(*wire_rsp);
+    assert(std::get<GetReportControlValuesResponse>(
+        reconfigured_brcb.payload).state.conf_rev == 2);
+
+    native_req.service = ServiceKind::SetBrcbValues;
+    native_req.invoke_id = 35;
+    SetReportControlValuesRequest stale_cursor;
+    stale_cursor.reference = "LD0/LLN0.rcbMinMaxAvg";
+    stale_cursor.entry_id = Bytes(8, 0xff);
+    native_req.payload = stale_cursor;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto stale_error = codec.decode(*wire_rsp);
+    assert(stale_error.service == ServiceKind::ServiceError);
+    assert(std::get<ServiceError>(stale_error.payload).status ==
+        ServiceStatus::ParameterValueInconsistent);
+
+    // A bounded BRCB journal drops the oldest record and marks overflow.
+    {
+        ServerConfig tiny_config;
+        tiny_config.buffered_report_capacity = 2;
+        ServerCore tiny{IedModel::make_ft20_reference_model(), tiny_config};
+        auto assoc_rsp = tiny.handle(codec.encode(assoc));
+        assert(assoc_rsp.has_value());
+
+        DmsPdu rcb_req;
+        rcb_req.message_class = MessageClass::Request;
+        rcb_req.service = ServiceKind::SetBrcbValues;
+        rcb_req.associate_id = "id_cp1";
+        rcb_req.invoke_id = 1;
+        SetReportControlValuesRequest cfg;
+        cfg.reference = "LD0/LLN0.rcbMinMaxAvg";
+        cfg.enabled = true;
+        cfg.integrity_period_ms = 10;
+        cfg.triggers = TriggerOptions{.integrity = true};
+        cfg.optional_fields = ReportOptionalFields{
+            .sequence_number = true,
+            .timestamp = true,
+            .data_set = true,
+            .buffer_overflow = true,
+            .config_revision = true,
+            .entry_id = true,
+            .reason_code = true
+        };
+        rcb_req.payload = cfg;
+        assert(tiny.handle(codec.encode(rcb_req)).has_value());
+
+        const auto base = std::chrono::steady_clock::now();
+        tiny.poll_scheduled_reports(base);
+        tiny.poll_scheduled_reports(base + std::chrono::milliseconds{11});
+        auto first = tiny.drain_unconfirmed();
+        assert(first.size() == 1);
+
+        tiny.poll_scheduled_reports(base + std::chrono::milliseconds{21});
+        auto second = tiny.drain_unconfirmed();
+        assert(second.size() == 1);
+
+        tiny.poll_scheduled_reports(base + std::chrono::milliseconds{31});
+        auto third = tiny.drain_unconfirmed();
+        assert(third.size() == 1);
+        assert(tiny.buffered_report_count("LD0/LLN0.rcbMinMaxAvg") == 2);
+        const auto& overflow_report = std::get<ReportPdu>(third[0].payload);
+        assert(overflow_report.buffer_overflow);
+        assert(overflow_report.sequence_number &&
+            *overflow_report.sequence_number == 2);
+    }
+
     // Canonical model exposes nested IEC attributes without dynamic dictionaries.
     {
         auto model = IedModel::make_ft20_reference_model();
