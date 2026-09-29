@@ -98,6 +98,21 @@ Exit: a user can launch one executable/service, open the browser, inspect the IE
 
 Exit: a simulator value/quality change, GI, data update or integrity timer reaches a subscribed client through a real unconfirmed report and is visible in the browser report monitor.
 
+## P4S — Scale foundation before client growth
+
+Detailed audit: [SCALABILITY_AUDIT.md](SCALABILITY_AUDIT.md)
+
+- [ ] stable ID/index layer for resolved model access
+- [ ] reverse signal/member -> RCB subscription index
+- [ ] remove per-update full-RCB scans
+- [ ] replace periodic all-RCB scheduler scan with due-time scheduling
+- [ ] global BRCB journal budget in addition to per-RCB bounds
+- [ ] paged/lazy model, signal, DataSet and RCB APIs
+- [ ] cursor-aware observer ring reads
+- [ ] deterministic 100k-signal benchmark profile and baseline
+
+Exit: known high-cardinality blockers are removed before the P5 client duplicates or depends on them. The formal one-million-signal certification remains P9.
+
 ## P5 — Native reference client in this repository
 
 - [ ] headless client CLI
