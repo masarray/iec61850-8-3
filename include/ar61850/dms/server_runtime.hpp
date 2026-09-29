@@ -79,18 +79,18 @@ public:
     void clear_reports();
 
     std::optional<IedModel> model_snapshot(
-        std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
+        std::chrono::milliseconds timeout = std::chrono::milliseconds{3000});
     bool set_float(
         std::string_view reference,
         float value,
-        std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
+        std::chrono::milliseconds timeout = std::chrono::milliseconds{3000});
     bool set_float_batch(
         std::vector<std::pair<std::string, float>> updates,
-        std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
+        std::chrono::milliseconds timeout = std::chrono::milliseconds{3000});
     bool set_quality(
         std::string_view reference,
         Quality quality,
-        std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
+        std::chrono::milliseconds timeout = std::chrono::milliseconds{3000});
 
 private:
     void on_receive(Bytes payload);
@@ -113,6 +113,7 @@ private:
     mutable std::mutex transport_mutex_;
     EventHandler event_handler_;
     std::jthread report_scheduler_;
+    std::atomic<bool> report_tick_pending_{false};
 
     mutable std::mutex report_mutex_;
     std::deque<ObservedReport> reports_;
