@@ -478,6 +478,16 @@ bool IedModel::set_float_batch(
     return true;
 }
 
+bool IedModel::set_quality(
+    std::string_view reference,
+    Quality quality) noexcept {
+    auto* attr = find_data_attribute(reference);
+    if (!attr || attr->type != DataType::Quality) return false;
+    attr->value = quality;
+    return true;
+}
+
+
 IedModel IedModel::make_ft20_reference_model() {
     IedModel model{"IED1"};
 
