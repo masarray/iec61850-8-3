@@ -109,7 +109,7 @@ Detailed audit: [SCALABILITY_AUDIT.md](SCALABILITY_AUDIT.md)
 - [ ] global BRCB journal budget in addition to per-RCB bounds
 - [ ] paged/lazy model, signal, DataSet and RCB APIs
 - [ ] cursor-aware observer ring reads
-- [ ] deterministic 100k-signal benchmark profile and baseline
+- [ ] deterministic representative large-model regression profile and baseline
 
 Exit: known high-cardinality blockers are removed before the P5 client duplicates or depends on them. P9 remains the broader performance-hardening phase; no fixed signal-count certification is required.
 
