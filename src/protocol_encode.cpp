@@ -140,6 +140,12 @@ ber::Bytes encode_set_rcb_request_fields(
     append(fields, explicit_string(0, req.reference));
     if (req.buffer_time_ms) append(fields, explicit_integer(1, *req.buffer_time_ms));
     if (req.data_set) append(fields, explicit_string(2, *req.data_set));
+    if (buffered && req.entry_id) {
+        if (req.entry_id->size() != 8) {
+            throw Error("DMS BER: BRCB entryID must be exactly 8 bytes");
+        }
+        append(fields, explicit_octets(3, *req.entry_id));
+    }
     if (req.gi) append(fields, explicit_bool(4, *req.gi));
     if (req.integrity_period_ms) {
         append(fields, explicit_integer(5, *req.integrity_period_ms));
