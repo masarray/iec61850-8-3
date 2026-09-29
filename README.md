@@ -72,7 +72,9 @@ The P2 read-only standalone server foundation is now in place: native WebSocket 
 
 The P3 Headless Web Lab foundation is now active on the development branch: the same native process serves a compact engineering Workbench with Server, Model, Signals and Protocol Inspector views. The browser remains an observer/control surface; protocol state stays in the native runtime.
 
-The local control plane exposes health/readiness, transport lifecycle, model/tree snapshots, atomic simulator mutations, deterministic scenarios and incremental trace cursors. DataSets and RCB/reporting follow in P4.
+The local control plane exposes health/readiness, transport lifecycle, model/tree snapshots, atomic simulator mutations, deterministic scenarios, incremental trace cursors, live RCB state and a delivered-report monitor.
+
+P4 is now implemented on this branch: static DataSets, BRCB/URCB state, GI, TrgOps, BufTm coalescing, dchg/qchg/dupd, periodic integrity reports, sequence/ConfRev continuity, bounded BRCB buffering with EntryID/PurgeBuf/BufOvfl, reconnect replay, and event-driven report delivery over the DMS transport path with no hidden cyclic read fallback.
 
 See:
 
@@ -104,11 +106,16 @@ See:
 
 ### P4 — DataSets and real event-driven reporting
 
-- DataSet directory/values;
-- BRCB/URCB state;
-- `RptEna`, GI, TrgOps and ConfRev;
-- reason-for-inclusion;
-- event-driven report delivery with no hidden polling fallback.
+- [x] static DataSet directory and values;
+- [x] BRCB/URCB discovery and state;
+- [x] `RptEna`, GI, TrgOps and ConfRev;
+- [x] dchg, qchg and dupd reason-for-inclusion;
+- [x] BufTm coalescing;
+- [x] periodic integrity scheduling;
+- [x] bounded BRCB journal with EntryID, PurgeBuf and BufOvfl;
+- [x] BRCB replay after reconnect;
+- [x] live browser RCB tree and Reports workspace;
+- [x] event-driven report delivery with no hidden polling fallback.
 
 ### P5/P6 — native client then ARStack61850
 
