@@ -84,9 +84,11 @@ std::vector<DataObjectDefinition> decode_do_definition_list(
 
 std::vector<DataAttributeValue> decode_data_attribute_values(
     const ber::Tlv& explicit_field,
+    std::uint32_t explicit_tag,
     const ber::Limits& limits) {
     using namespace ber;
-    const auto list = unwrap_explicit(explicit_field, 0, limits, "dataAttrVal");
+    const auto list = unwrap_explicit(
+        explicit_field, explicit_tag, limits, "dataAttrVal");
     require_tag(list, TagClass::Universal, true, 16, "dataAttrVal");
     std::vector<DataAttributeValue> result;
     for (const auto& item : children(list, limits, 5)) {
@@ -275,6 +277,119 @@ SetReportControlValuesRequest decode_set_rcb_request(
     }
     if (req.reference.empty()) throw Error("DMS BER: set RCB request missing reference");
     return req;
+}
+
+ReasonForInclusion decode_reason_for_inclusion(
+    const ber::Tlv& seq,
+    const ber::Limits& limits) {
+    using namespace ber;
+    require_tag(seq, TagClass::Universal, true, 16, "ReasonForInclusionInLog");
+    ReasonForInclusion reason;
+    for (const auto& field : children(seq, limits, 6)) {
+        if (field.tag == Tag{TagClass::Context, true, 0}) {
+            reason.data_change =
+                decode_explicit_bool(field, 0, limits, "dataChange");
+        } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+            reason.quality_change =
+                decode_explicit_bool(field, 1, limits, "qualityChange");
+        } else if (field.tag == Tag{TagClass::Context, true, 2}) {
+            reason.data_update =
+                decode_explicit_bool(field, 2, limits, "dataUpdate");
+        } else if (field.tag == Tag{TagClass::Context, true, 3}) {
+            reason.integrity =
+                decode_explicit_bool(field, 3, limits, "integrity");
+        } else if (field.tag == Tag{TagClass::Context, true, 4}) {
+            reason.general_interrogation =
+                decode_explicit_bool(field, 4, limits, "generalInterrogation");
+        } else if (field.tag == Tag{TagClass::Context, true, 5}) {
+            reason.application_trigger =
+                decode_explicit_bool(field, 5, limits, "applicationTrigger");
+        }
+    }
+    return reason;
+}
+
+ReportEntryData decode_report_entry(
+    const ber::Tlv& seq,
+    const ber::Limits& limits) {
+    using namespace ber;
+    require_tag(seq, TagClass::Universal, true, 16, "EntryData1");
+    ReportEntryData entry;
+    for (const auto& field : children(seq, limits, 6)) {
+        if (field.tag == Tag{TagClass::Context, true, 0}) {
+            entry.data_reference =
+                decode_explicit_string(field, 0, limits, "dataRef");
+        } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+            entry.values =
+                decode_data_attribute_values(field, 1, limits);
+        } else if (field.tag == Tag{TagClass::Context, true, 2}) {
+            const auto reason_seq =
+                unwrap_explicit(field, 2, limits, "reasonCode");
+            entry.reason =
+                decode_reason_for_inclusion(reason_seq, limits);
+        }
+    }
+    if (entry.data_reference.empty()) {
+        throw Error("DMS BER: report entry missing dataRef");
+    }
+    return entry;
+}
+
+ReportPdu decode_report(
+    const ber::Tlv& report_seq,
+    const ber::Limits& limits) {
+    using namespace ber;
+    require_tag(report_seq, TagClass::Universal, true, 16, "Report");
+    ReportPdu report;
+    for (const auto& field : children(report_seq, limits, 4)) {
+        if (field.tag == Tag{TagClass::Context, true, 0}) {
+            report.report_id = decode_explicit_string(field, 0, limits, "rptID");
+        } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+            report.sequence_number = static_cast<std::uint16_t>(
+                decode_explicit_integer(field, 1, limits, "sqNum"));
+        } else if (field.tag == Tag{TagClass::Context, true, 2}) {
+            report.sub_sequence_number = static_cast<std::uint16_t>(
+                decode_explicit_integer(field, 2, limits, "subSqNum"));
+        } else if (field.tag == Tag{TagClass::Context, true, 3}) {
+            report.more_segments_follow =
+                decode_explicit_bool(field, 3, limits, "moreSegmentsFollow");
+        } else if (field.tag == Tag{TagClass::Context, true, 4}) {
+            report.data_set = decode_explicit_string(field, 4, limits, "dataSet");
+        } else if (field.tag == Tag{TagClass::Context, true, 5}) {
+            report.buffer_overflow =
+                decode_explicit_bool(field, 5, limits, "bufOvfl");
+        } else if (field.tag == Tag{TagClass::Context, true, 6}) {
+            report.conf_rev = static_cast<std::uint32_t>(
+                decode_explicit_integer(field, 6, limits, "confRev"));
+        } else if (field.tag == Tag{TagClass::Context, true, 7}) {
+            const auto entry_seq = unwrap_explicit(field, 7, limits, "entry");
+            require_tag(entry_seq, TagClass::Universal, true, 16, "Entry");
+            for (const auto& ef : children(entry_seq, limits, 5)) {
+                if (ef.tag == Tag{TagClass::Context, true, 0}) {
+                    const auto time_seq =
+                        unwrap_explicit(ef, 0, limits, "timeOfEntry");
+                    report.time_of_entry =
+                        decode_timestamp_sequence(time_seq, limits, 6);
+                } else if (ef.tag == Tag{TagClass::Context, true, 1}) {
+                    report.entry_id =
+                        decode_explicit_octets(ef, 1, limits, "entryID");
+                } else if (ef.tag == Tag{TagClass::Context, true, 2}) {
+                    const auto list =
+                        unwrap_explicit(ef, 2, limits, "entryData");
+                    require_tag(
+                        list, TagClass::Universal, true, 16, "entryData");
+                    for (const auto& item : children(list, limits, 7)) {
+                        report.entries.push_back(
+                            decode_report_entry(item, limits));
+                    }
+                }
+            }
+        }
+    }
+    if (report.report_id.empty()) {
+        throw Error("DMS BER: report missing rptID");
+    }
+    return report;
 }
 
 } // namespace
@@ -660,7 +775,7 @@ DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
             GetDataValuesResponse rsp;
             for (const auto& field : fields) {
                 if (field.tag == Tag{TagClass::Context, true, 0}) {
-                    rsp.data_attribute_values = decode_data_attribute_values(field, limits_);
+                    rsp.data_attribute_values = decode_data_attribute_values(field, 0, limits_);
                 }
             }
             pdu.payload = std::move(rsp);
@@ -674,7 +789,7 @@ DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
             GetDataSetValuesResponse rsp;
             for (const auto& field : fields) {
                 if (field.tag == Tag{TagClass::Context, true, 0}) {
-                    rsp.member_values = decode_data_attribute_values(field, limits_);
+                    rsp.member_values = decode_data_attribute_values(field, 0, limits_);
                 }
             }
             pdu.payload = std::move(rsp);
@@ -734,6 +849,38 @@ DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
             return pdu;
         }
 
+        pdu.service = ServiceKind::Unknown;
+        return pdu;
+    }
+
+    if (outer.tag == Tag{TagClass::Context, true, 3}) {
+        pdu.message_class = MessageClass::Unconfirmed;
+        const auto seqs = children(outer, limits_, 0);
+        if (seqs.size() != 1) {
+            throw Error("DMS BER: invalid UnconfirmedType");
+        }
+        require_tag(
+            seqs[0], TagClass::Universal, true, 16, "UnconfirmedType");
+        const auto fields = children(seqs[0], limits_, 1);
+        if (fields.size() < 2) {
+            throw Error("DMS BER: incomplete UnconfirmedType");
+        }
+        pdu.associate_id =
+            decode_explicit_string(fields[0], 0, limits_, "associateId");
+        require_tag(
+            fields[1], TagClass::Context, true, 1, "unconfirmed service");
+        const auto choices = children(fields[1], limits_, 2);
+        if (choices.size() != 1) {
+            throw Error("DMS BER: invalid UnconfirmedServiceType");
+        }
+        const auto& choice = choices.front();
+        if (choice.tag == Tag{TagClass::Context, true, 0}) {
+            const auto report_seq =
+                unwrap_explicit(choice, 0, limits_, "report");
+            pdu.service = ServiceKind::Report;
+            pdu.payload = decode_report(report_seq, limits_);
+            return pdu;
+        }
         pdu.service = ServiceKind::Unknown;
         return pdu;
     }
