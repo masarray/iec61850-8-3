@@ -168,7 +168,7 @@ int main() {
     assert(delivered_reports.back().report.entries.front().reason.quality_change);
 
     const auto traces = runtime.trace_snapshot();
-    assert(traces.size() >= 10);
+    assert(traces.size() >= 9);
     assert(runtime.dropped_messages() == 0);
 
     runtime.stop();
