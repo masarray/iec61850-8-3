@@ -255,6 +255,168 @@ int main() {
     assert(std::get<float>(
         dataset_values.member_values[0].children[0].children[0].scalar) == 10.0F);
 
+    // P4 RCB foundation: discover BRCB/URCB and exercise typed get/set state.
+    native_req.service = ServiceKind::GetLogicalNodeDirectory;
+    native_req.invoke_id = 20;
+    native_req.payload = GetLogicalNodeDirectoryRequest{
+        .logical_node_reference = "LD0/LLN0",
+        .acsi_class = AcsiClass::Brcb
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto brcb_list_pdu = codec.decode(*wire_rsp);
+    const auto& brcb_list =
+        std::get<GetLogicalNodeDirectoryResponse>(brcb_list_pdu.payload);
+    assert(brcb_list.instance_names.size() == 1);
+    assert(brcb_list.instance_names[0] == "rcbMinMaxAvg");
+
+    native_req.invoke_id = 21;
+    native_req.payload = GetLogicalNodeDirectoryRequest{
+        .logical_node_reference = "LD0/LLN0",
+        .acsi_class = AcsiClass::Urcb
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto urcb_list_pdu = codec.decode(*wire_rsp);
+    const auto& urcb_list =
+        std::get<GetLogicalNodeDirectoryResponse>(urcb_list_pdu.payload);
+    assert(urcb_list.instance_names.size() == 2);
+    assert(urcb_list.instance_names[0] == "rcbSetpoints");
+    assert(urcb_list.instance_names[1] == "rcbActualValues");
+
+    native_req.service = ServiceKind::GetBrcbValues;
+    native_req.invoke_id = 22;
+    native_req.payload = GetReportControlValuesRequest{
+        .reference = "LD0/LLN0.rcbMinMaxAvg"
+    };
+    const auto get_brcb_wire = codec.encode(native_req);
+    const auto get_brcb_req_roundtrip = codec.decode(get_brcb_wire);
+    assert(get_brcb_req_roundtrip.service == ServiceKind::GetBrcbValues);
+    assert(std::get<GetReportControlValuesRequest>(
+        get_brcb_req_roundtrip.payload).reference ==
+        "LD0/LLN0.rcbMinMaxAvg");
+
+    wire_rsp = server.handle(get_brcb_wire);
+    assert(wire_rsp.has_value());
+    auto brcb_pdu = codec.decode(*wire_rsp);
+    assert(brcb_pdu.service == ServiceKind::GetBrcbValues);
+    const auto& brcb =
+        std::get<GetReportControlValuesResponse>(brcb_pdu.payload).state;
+    assert(brcb.buffered);
+    assert(brcb.report_id == "MinMaxAvg");
+    assert(brcb.data_set == "LD0/LLN0.DataSetMinMaxAvg");
+    assert(brcb.conf_rev == 1);
+    assert(brcb.integrity_period_ms == 2000);
+    assert(brcb.triggers.integrity);
+    assert(brcb.entry_id.size() == 8);
+    assert(brcb.time_of_entry.has_value());
+
+    native_req.service = ServiceKind::SetUrcbValues;
+    native_req.invoke_id = 23;
+    SetReportControlValuesRequest enable_urcb;
+    enable_urcb.reference = "LD0/LLN0.rcbActualValues";
+    enable_urcb.enabled = true;
+    enable_urcb.gi = true;
+    enable_urcb.buffer_time_ms = 250;
+    enable_urcb.triggers = TriggerOptions{
+        .data_change = true,
+        .quality_change = true,
+        .general_interrogation = true
+    };
+    native_req.payload = enable_urcb;
+
+    const auto set_urcb_wire = codec.encode(native_req);
+    const auto set_urcb_roundtrip = codec.decode(set_urcb_wire);
+    assert(set_urcb_roundtrip.service == ServiceKind::SetUrcbValues);
+    const auto& decoded_set_urcb =
+        std::get<SetReportControlValuesRequest>(set_urcb_roundtrip.payload);
+    assert(decoded_set_urcb.reference == "LD0/LLN0.rcbActualValues");
+    assert(decoded_set_urcb.enabled && *decoded_set_urcb.enabled);
+    assert(decoded_set_urcb.gi && *decoded_set_urcb.gi);
+    assert(decoded_set_urcb.buffer_time_ms &&
+        *decoded_set_urcb.buffer_time_ms == 250);
+    assert(decoded_set_urcb.triggers &&
+        decoded_set_urcb.triggers->general_interrogation);
+
+    wire_rsp = server.handle(set_urcb_wire);
+    assert(wire_rsp.has_value());
+    auto set_urcb_rsp_pdu = codec.decode(*wire_rsp);
+    assert(set_urcb_rsp_pdu.service == ServiceKind::SetUrcbValues);
+    assert(std::get<SetReportControlValuesResponse>(
+        set_urcb_rsp_pdu.payload).ok);
+
+    native_req.service = ServiceKind::GetUrcbValues;
+    native_req.invoke_id = 24;
+    native_req.payload = GetReportControlValuesRequest{
+        .reference = "LD0/LLN0.rcbActualValues"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto urcb_pdu = codec.decode(*wire_rsp);
+    const auto& urcb =
+        std::get<GetReportControlValuesResponse>(urcb_pdu.payload).state;
+    assert(!urcb.buffered);
+    assert(urcb.enabled);
+    assert(urcb.gi);
+    assert(urcb.buffer_time_ms == 250);
+    assert(urcb.triggers.data_change);
+    assert(urcb.triggers.quality_change);
+    assert(urcb.triggers.general_interrogation);
+
+    // Configuration writes while RptEna remains true are rejected.
+    native_req.service = ServiceKind::SetUrcbValues;
+    native_req.invoke_id = 25;
+    SetReportControlValuesRequest illegal_live_write;
+    illegal_live_write.reference = "LD0/LLN0.rcbActualValues";
+    illegal_live_write.integrity_period_ms = 5000;
+    native_req.payload = illegal_live_write;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto live_write_error = codec.decode(*wire_rsp);
+    assert(live_write_error.service == ServiceKind::ServiceError);
+    assert(std::get<ServiceError>(live_write_error.payload).status ==
+        ServiceStatus::AccessNotAllowedInCurrentState);
+
+    // A single request may disable the RCB and then apply configuration safely.
+    native_req.invoke_id = 26;
+    SetReportControlValuesRequest disable_and_configure;
+    disable_and_configure.reference = "LD0/LLN0.rcbActualValues";
+    disable_and_configure.enabled = false;
+    disable_and_configure.integrity_period_ms = 5000;
+    disable_and_configure.gi = false;
+    native_req.payload = disable_and_configure;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto disable_rsp = codec.decode(*wire_rsp);
+    assert(disable_rsp.service == ServiceKind::SetUrcbValues);
+
+    native_req.service = ServiceKind::GetUrcbValues;
+    native_req.invoke_id = 27;
+    native_req.payload = GetReportControlValuesRequest{
+        .reference = "LD0/LLN0.rcbActualValues"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    urcb_pdu = codec.decode(*wire_rsp);
+    const auto& urcb_after_disable =
+        std::get<GetReportControlValuesResponse>(urcb_pdu.payload).state;
+    assert(!urcb_after_disable.enabled);
+    assert(!urcb_after_disable.gi);
+    assert(urcb_after_disable.integrity_period_ms == 5000);
+
+    // Service family must match the canonical RCB class.
+    native_req.service = ServiceKind::GetBrcbValues;
+    native_req.invoke_id = 28;
+    native_req.payload = GetReportControlValuesRequest{
+        .reference = "LD0/LLN0.rcbActualValues"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto class_error = codec.decode(*wire_rsp);
+    assert(class_error.service == ServiceKind::ServiceError);
+    assert(std::get<ServiceError>(class_error.payload).status ==
+        ServiceStatus::ClassNotSupported);
+
     // Canonical model exposes nested IEC attributes without dynamic dictionaries.
     {
         auto model = IedModel::make_ft20_reference_model();
