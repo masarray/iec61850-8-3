@@ -98,6 +98,48 @@ DataAttributeValue make_data_object_value(
     return value;
 }
 
+bool is_rcb_configuration_write(const SetReportControlValuesRequest& req) {
+    return req.report_id.has_value() ||
+        req.data_set.has_value() ||
+        req.buffer_time_ms.has_value() ||
+        req.integrity_period_ms.has_value() ||
+        req.triggers.has_value() ||
+        req.optional_fields.has_value() ||
+        req.reserved_time_seconds.has_value();
+}
+
+void apply_rcb_write(
+    ReportControlState& state,
+    const SetReportControlValuesRequest& req) {
+    const bool was_enabled = state.enabled;
+
+    if (req.enabled) state.enabled = *req.enabled;
+    if (req.report_id) state.report_id = *req.report_id;
+    if (req.data_set) state.data_set = *req.data_set;
+    if (req.buffer_time_ms) state.buffer_time_ms = *req.buffer_time_ms;
+    if (req.integrity_period_ms) {
+        state.integrity_period_ms = *req.integrity_period_ms;
+    }
+    if (req.triggers) state.triggers = *req.triggers;
+    if (req.optional_fields) state.optional_fields = *req.optional_fields;
+    if (req.reserved) state.reserved = *req.reserved;
+    if (req.reserved_time_seconds) {
+        state.reserved_time_seconds = *req.reserved_time_seconds;
+    }
+    if (req.gi) state.gi = *req.gi;
+
+    if (!was_enabled && state.enabled) {
+        state.sequence_number = 0;
+    }
+
+    // There is no buffered journal yet. Treat PurgeBuf as a command and
+    // acknowledge it without leaving a sticky state behind.
+    if (req.purge_buffer && *req.purge_buffer) {
+        state.entry_id.assign(8, 0);
+        state.purge_buffer = false;
+    }
+}
+
 } // namespace
 
 ServerCore::ServerCore(IedModel model, ServerConfig config)
@@ -200,6 +242,26 @@ std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
         } else if (req.acsi_class == AcsiClass::DataSet) {
             for (const auto& data_set : ln->data_sets) {
                 body.instance_names.push_back(data_set.name);
+            }
+        } else if (req.acsi_class == AcsiClass::Brcb) {
+            for (const auto& rcb : ln->report_controls) {
+                if (rcb.buffered) {
+                    const auto dot = rcb.reference.value.rfind('.');
+                    body.instance_names.push_back(
+                        dot == std::string::npos
+                            ? rcb.reference.value
+                            : rcb.reference.value.substr(dot + 1));
+                }
+            }
+        } else if (req.acsi_class == AcsiClass::Urcb) {
+            for (const auto& rcb : ln->report_controls) {
+                if (!rcb.buffered) {
+                    const auto dot = rcb.reference.value.rfind('.');
+                    body.instance_names.push_back(
+                        dot == std::string::npos
+                            ? rcb.reference.value
+                            : rcb.reference.value.substr(dot + 1));
+                }
             }
         } else {
             return error_for(request, ServiceStatus::ClassNotSupported);
@@ -315,6 +377,73 @@ std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
         }
 
         rsp.payload = std::move(body);
+        return rsp;
+    }
+
+    if (request.service == ServiceKind::GetBrcbValues ||
+        request.service == ServiceKind::GetUrcbValues) {
+        const bool expect_buffered =
+            request.service == ServiceKind::GetBrcbValues;
+        const auto& req =
+            std::get<GetReportControlValuesRequest>(request.payload);
+        const auto* state = model_.find_report_control(req.reference);
+        if (!state) {
+            return error_for(request, ServiceStatus::InstanceNotAvailable);
+        }
+        if (state->buffered != expect_buffered) {
+            return error_for(request, ServiceStatus::ClassNotSupported);
+        }
+
+        rsp.payload = GetReportControlValuesResponse{.state = *state};
+        return rsp;
+    }
+
+    if (request.service == ServiceKind::SetBrcbValues ||
+        request.service == ServiceKind::SetUrcbValues) {
+        const bool expect_buffered =
+            request.service == ServiceKind::SetBrcbValues;
+        const auto& req =
+            std::get<SetReportControlValuesRequest>(request.payload);
+        auto* state = model_.find_report_control(req.reference);
+        if (!state) {
+            return error_for(request, ServiceStatus::InstanceNotAvailable);
+        }
+        if (state->buffered != expect_buffered) {
+            return error_for(request, ServiceStatus::ClassNotSupported);
+        }
+
+        const bool disables_in_same_request =
+            req.enabled.has_value() && !*req.enabled;
+        if (state->enabled &&
+            is_rcb_configuration_write(req) &&
+            !disables_in_same_request) {
+            return error_for(
+                request, ServiceStatus::AccessNotAllowedInCurrentState);
+        }
+
+        if (req.data_set && !req.data_set->empty() &&
+            !model_.find_data_set(*req.data_set)) {
+            return error_for(
+                request, ServiceStatus::ParameterValueInconsistent);
+        }
+
+        const bool target_enabled =
+            req.enabled.value_or(state->enabled);
+        const auto target_triggers =
+            req.triggers.value_or(state->triggers);
+        if (req.gi && *req.gi) {
+            if (!target_enabled) {
+                return error_for(
+                    request, ServiceStatus::AccessNotAllowedInCurrentState);
+            }
+            if (!target_triggers.general_interrogation) {
+                return error_for(
+                    request, ServiceStatus::ParameterValueInconsistent);
+            }
+        }
+
+        apply_rcb_write(*state, req);
+        rsp.payload = SetReportControlValuesResponse{.ok = true};
         return rsp;
     }
 
