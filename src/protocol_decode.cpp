@@ -242,6 +242,11 @@ SetReportControlValuesRequest decode_set_rcb_request(
                 decode_explicit_integer(field, 1, limits, "bufTm"));
         } else if (field.tag == Tag{TagClass::Context, true, 2}) {
             req.data_set = decode_explicit_string(field, 2, limits, "dataSet");
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 3}) {
+            req.entry_id = decode_explicit_octets(field, 3, limits, "entryID");
+            if (req.entry_id->size() != 8) {
+                throw Error("DMS BER: BRCB entryID must be exactly 8 bytes");
+            }
         } else if (field.tag == Tag{TagClass::Context, true, 4}) {
             req.gi = decode_explicit_bool(field, 4, limits, "gi");
         } else if (field.tag == Tag{TagClass::Context, true, 5}) {
