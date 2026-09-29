@@ -76,7 +76,20 @@ The local control plane exposes health/readiness, transport lifecycle, model/tre
 
 P4 is now implemented on this branch: static DataSets, BRCB/URCB state, GI, TrgOps, BufTm coalescing, dchg/qchg/dupd, periodic integrity reports, sequence/ConfRev continuity, bounded BRCB buffering with EntryID/PurgeBuf/BufOvfl, reconnect replay, and event-driven report delivery over the DMS transport path with no hidden cyclic read fallback.
 
-See:
+## Engineering contract
+
+This repository is intentionally **not** developed as disposable PoC code.
+
+All implementation work is governed by:
+
+- [AGENTS.md](AGENTS.md) — mandatory repository-wide coding/architecture rules;
+- [Engineering Standard](docs/ENGINEERING_STANDARD.md) — layering, ownership, hot-path, backpressure and review rules;
+- [Scalability Plan](docs/SCALABILITY.md) — million-point architecture and benchmark acceptance gates;
+- [Implementation Phases](docs/IMPLEMENTATION_PHASES.md) — phase-by-phase completion plan through stable 1.0.
+
+The long-term scale target is at least **1,000,000 leaf signals in one loaded model**. This is a design target until the P9 benchmark gate is completed; the project will not claim validated million-point capability before measured evidence exists.
+
+See also:
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
