@@ -3,6 +3,7 @@
 #include "ar61850/dms/server_core.hpp"
 
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
@@ -381,8 +382,11 @@ int main() {
     assert(urcb.triggers.quality_change);
     assert(urcb.triggers.general_interrogation);
 
-    // Simulator mutation produces a true unconfirmed dchg report.
+    // BufTm coalesces event triggers before an unconfirmed dchg report.
     assert(server.set_float("LD0/MMXU1.TotW.mag.f", 77.25F));
+    assert(server.drain_unconfirmed().empty());
+    server.poll_scheduled_reports(
+        std::chrono::steady_clock::now() + std::chrono::milliseconds{500});
     pending_reports = server.drain_unconfirmed();
     assert(pending_reports.size() == 1);
     const auto dchg_wire = codec.encode(pending_reports[0]);
@@ -395,6 +399,22 @@ int main() {
     assert(!dchg_report.entries[0].reason.general_interrogation);
     assert(dchg_report.entries[0].values.size() == 1);
     assert(dchg_report.entries[0].values[0].type == DataType::Structure);
+
+    // Quality mutations drive qchg independently from value changes.
+    Quality invalid_quality;
+    invalid_quality.validity = Validity::Invalid;
+    assert(server.set_quality("LD0/MMXU1.TotW.q", invalid_quality));
+    assert(server.drain_unconfirmed().empty());
+    server.poll_scheduled_reports(
+        std::chrono::steady_clock::now() + std::chrono::milliseconds{500});
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    const auto qchg_pdu = codec.decode(codec.encode(pending_reports[0]));
+    const auto& qchg_report = std::get<ReportPdu>(qchg_pdu.payload);
+    assert(qchg_report.entries.size() == 1);
+    assert(qchg_report.entries[0].data_reference == "LD0/MMXU1.TotW");
+    assert(qchg_report.entries[0].reason.quality_change);
+    assert(!qchg_report.entries[0].reason.data_change);
 
     // Configuration writes while RptEna remains true are rejected.
     native_req.service = ServiceKind::SetUrcbValues;
@@ -415,8 +435,15 @@ int main() {
     SetReportControlValuesRequest disable_and_configure;
     disable_and_configure.reference = "LD0/LLN0.rcbActualValues";
     disable_and_configure.enabled = false;
+    disable_and_configure.buffer_time_ms = 0;
     disable_and_configure.integrity_period_ms = 5000;
     disable_and_configure.gi = false;
+    disable_and_configure.triggers = TriggerOptions{
+        .data_change = true,
+        .quality_change = true,
+        .data_update = true,
+        .general_interrogation = true
+    };
     native_req.payload = disable_and_configure;
     wire_rsp = server.handle(codec.encode(native_req));
     assert(wire_rsp.has_value());
@@ -436,6 +463,28 @@ int main() {
     assert(!urcb_after_disable.enabled);
     assert(!urcb_after_disable.gi);
     assert(urcb_after_disable.integrity_period_ms == 5000);
+    assert(urcb_after_disable.buffer_time_ms == 0);
+    assert(urcb_after_disable.triggers.data_update);
+
+    native_req.service = ServiceKind::SetUrcbValues;
+    native_req.invoke_id = 29;
+    SetReportControlValuesRequest reenable_urcb;
+    reenable_urcb.reference = "LD0/LLN0.rcbActualValues";
+    reenable_urcb.enabled = true;
+    native_req.payload = reenable_urcb;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    assert(codec.decode(*wire_rsp).service == ServiceKind::SetUrcbValues);
+
+    // Writing the same value is a data update, not a data change.
+    assert(server.set_float("LD0/MMXU1.TotW.mag.f", 77.25F));
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    const auto dupd_pdu = codec.decode(codec.encode(pending_reports[0]));
+    const auto& dupd_report = std::get<ReportPdu>(dupd_pdu.payload);
+    assert(dupd_report.entries.size() == 1);
+    assert(dupd_report.entries[0].reason.data_update);
+    assert(!dupd_report.entries[0].reason.data_change);
 
     // Service family must match the canonical RCB class.
     native_req.service = ServiceKind::GetBrcbValues;
@@ -449,6 +498,81 @@ int main() {
     assert(class_error.service == ServiceKind::ServiceError);
     assert(std::get<ServiceError>(class_error.payload).status ==
         ServiceStatus::ClassNotSupported);
+
+    // BRCB integrity scheduling keeps sequence continuity and a replay journal.
+    native_req.service = ServiceKind::SetBrcbValues;
+    native_req.invoke_id = 30;
+    SetReportControlValuesRequest enable_brcb;
+    enable_brcb.reference = "LD0/LLN0.rcbMinMaxAvg";
+    enable_brcb.enabled = true;
+    enable_brcb.buffer_time_ms = 0;
+    enable_brcb.integrity_period_ms = 100;
+    enable_brcb.triggers = TriggerOptions{.integrity = true};
+    enable_brcb.optional_fields = ReportOptionalFields{
+        .sequence_number = true,
+        .timestamp = true,
+        .data_set = true,
+        .buffer_overflow = true,
+        .config_revision = true,
+        .entry_id = true,
+        .data_reference = true,
+        .reason_code = true
+    };
+    native_req.payload = enable_brcb;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    assert(codec.decode(*wire_rsp).service == ServiceKind::SetBrcbValues);
+    assert(server.drain_unconfirmed().empty());
+
+    const auto t0 = std::chrono::steady_clock::now();
+    server.poll_scheduled_reports(t0);
+    server.poll_scheduled_reports(t0 + std::chrono::milliseconds{101});
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    auto integrity1 = std::get<ReportPdu>(
+        codec.decode(codec.encode(pending_reports[0])).payload);
+    assert(integrity1.sequence_number && *integrity1.sequence_number == 0);
+    assert(integrity1.conf_rev && *integrity1.conf_rev == 1);
+    assert(integrity1.entries.size() == 3);
+    assert(integrity1.entries[0].reason.integrity);
+    assert(integrity1.entry_id.size() == 8);
+    assert(server.buffered_report_count("LD0/LLN0.rcbMinMaxAvg") == 1);
+
+    server.poll_scheduled_reports(t0 + std::chrono::milliseconds{201});
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    auto integrity2 = std::get<ReportPdu>(
+        codec.decode(codec.encode(pending_reports[0])).payload);
+    assert(integrity2.sequence_number && *integrity2.sequence_number == 1);
+    assert(integrity2.entry_id != integrity1.entry_id);
+    assert(server.buffered_report_count("LD0/LLN0.rcbMinMaxAvg") == 2);
+
+    // EntryID is a real BER cursor and replays journal entries after the cursor.
+    native_req.invoke_id = 31;
+    SetReportControlValuesRequest replay_brcb;
+    replay_brcb.reference = "LD0/LLN0.rcbMinMaxAvg";
+    replay_brcb.entry_id = integrity1.entry_id;
+    native_req.payload = replay_brcb;
+    const auto replay_wire = codec.encode(native_req);
+    const auto replay_roundtrip = codec.decode(replay_wire);
+    const auto& replay_req =
+        std::get<SetReportControlValuesRequest>(replay_roundtrip.payload);
+    assert(replay_req.entry_id && *replay_req.entry_id == integrity1.entry_id);
+    wire_rsp = server.handle(replay_wire);
+    assert(wire_rsp.has_value());
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    const auto replayed = std::get<ReportPdu>(pending_reports[0].payload);
+    assert(replayed.entry_id == integrity2.entry_id);
+
+    native_req.invoke_id = 32;
+    SetReportControlValuesRequest purge_brcb;
+    purge_brcb.reference = "LD0/LLN0.rcbMinMaxAvg";
+    purge_brcb.purge_buffer = true;
+    native_req.payload = purge_brcb;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    assert(server.buffered_report_count("LD0/LLN0.rcbMinMaxAvg") == 0);
 
     // Canonical model exposes nested IEC attributes without dynamic dictionaries.
     {
