@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -18,6 +19,12 @@
 #include <vector>
 
 namespace ar61850::dms {
+
+struct ObservedReport {
+    std::uint64_t sequence{0};
+    std::chrono::system_clock::time_point observed_at{};
+    ReportPdu report;
+};
 
 struct RuntimeEvent {
     enum class Kind : std::uint8_t {
@@ -41,7 +48,8 @@ public:
         ServerCore core,
         std::unique_ptr<IWireTransport> transport,
         std::size_t max_pending_messages = 1024,
-        std::size_t trace_capacity = 4096);
+        std::size_t trace_capacity = 4096,
+        std::size_t report_capacity = 1024);
 
     ~ServerRuntime();
 
@@ -67,6 +75,8 @@ public:
 
     std::vector<TraceEvent> trace_snapshot() const { return trace_.snapshot(); }
     void clear_trace() { trace_.clear(); }
+    std::vector<ObservedReport> report_snapshot() const;
+    void clear_reports();
 
     std::optional<IedModel> model_snapshot(
         std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
@@ -87,6 +97,7 @@ private:
     void emit(RuntimeEvent::Kind kind, std::string detail = {});
     void trace_wire(Direction direction, const DmsPdu& pdu, std::size_t bytes);
     void flush_unconfirmed();
+    void record_report(const ReportPdu& report);
 
     ServerCore core_;
     ProtocolCodec codec_;
@@ -102,6 +113,11 @@ private:
     mutable std::mutex transport_mutex_;
     EventHandler event_handler_;
     std::jthread report_scheduler_;
+
+    mutable std::mutex report_mutex_;
+    std::deque<ObservedReport> reports_;
+    std::size_t report_capacity_{1024};
+    std::uint64_t next_report_sequence_{1};
 };
 
 } // namespace ar61850::dms
