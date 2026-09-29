@@ -169,6 +169,34 @@ struct SetReportControlValuesResponse {
     bool ok{true};
 };
 
+struct ReasonForInclusion {
+    bool data_change{false};
+    bool quality_change{false};
+    bool data_update{false};
+    bool integrity{false};
+    bool general_interrogation{false};
+    bool application_trigger{false};
+};
+
+struct ReportEntryData {
+    std::string data_reference;
+    std::vector<DataAttributeValue> values;
+    ReasonForInclusion reason;
+};
+
+struct ReportPdu {
+    std::string report_id;
+    std::optional<std::uint16_t> sequence_number;
+    std::uint16_t sub_sequence_number{0};
+    bool more_segments_follow{false};
+    std::optional<std::string> data_set;
+    bool buffer_overflow{false};
+    std::optional<std::uint32_t> conf_rev;
+    std::optional<Timestamp> time_of_entry;
+    Bytes entry_id;
+    std::vector<ReportEntryData> entries;
+};
+
 struct ServiceError {
     ServiceStatus status{ServiceStatus::FailedDueToServerConstraint};
 };
@@ -184,7 +212,7 @@ using Payload = std::variant<std::monostate, AssociateRequest, AssociateResponse
     GetDataSetValuesRequest, GetDataSetValuesResponse,
     GetReportControlValuesRequest, GetReportControlValuesResponse,
     SetReportControlValuesRequest, SetReportControlValuesResponse,
-    ServiceError>;
+    ReportPdu, ServiceError>;
 
 struct DmsPdu {
     MessageClass message_class{MessageClass::Request};
