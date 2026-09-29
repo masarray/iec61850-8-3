@@ -50,10 +50,20 @@ void ServerRuntime::start() {
             while (!token.stop_requested()) {
                 std::this_thread::sleep_for(25ms);
                 if (token.stop_requested() || !running()) break;
-                service_worker_.post([this] {
+                if (report_tick_pending_.exchange(
+                        true, std::memory_order_acq_rel)) {
+                    continue;
+                }
+                const bool accepted = service_worker_.post([this] {
                     core_.poll_scheduled_reports();
                     flush_unconfirmed();
+                    report_tick_pending_.store(
+                        false, std::memory_order_release);
                 });
+                if (!accepted) {
+                    report_tick_pending_.store(
+                        false, std::memory_order_release);
+                }
             }
         });
         emit(RuntimeEvent::Kind::Started);
