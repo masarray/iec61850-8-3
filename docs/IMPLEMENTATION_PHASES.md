@@ -79,7 +79,7 @@ Remaining maturation:
 
 - push/event stream;
 - release packaging;
-- lazy/paged APIs before million-scale certification.
+- lazy/paged APIs before large-model use becomes a common workflow.
 
 Exit gate:
 
@@ -135,7 +135,7 @@ Work:
 - global BRCB storage budget;
 - paged/lazy engineering APIs;
 - cursor-aware trace/report reads;
-- deterministic 100k-signal architecture benchmark.
+- deterministic generated large-model architecture regression profile.
 
 Exit gate:
 
@@ -143,7 +143,7 @@ Exit gate:
 - timer tick does not inspect every RCB;
 - browser navigation does not require copying/serializing the complete model;
 - high-cardinality buffers have both local and global budgets;
-- 100k benchmark profile establishes a regression baseline.
+- representative large-model profile establishes a regression baseline.
 
 This phase happens before broad P5 feature work so client/server implementations share scalable patterns instead of duplicating small-model assumptions.
 
@@ -248,9 +248,9 @@ Exit gate:
 - canonical service/model layers remain encoding-independent;
 - at least two mappings can coexist without duplicated application semantics when required.
 
-## P9 — Million-point architecture and performance certification
+## P9 — High-scale architecture and performance hardening
 
-Goal: prove large-model capability rather than merely designing for it.
+Goal: harden high-cardinality data structures, schedulers, APIs and memory behavior so large engineering workloads remain responsive.
 
 Work:
 
@@ -265,7 +265,6 @@ Work:
 - benchmark model generator;
 - deterministic benchmark runner;
 - CPU/memory profiles;
-- 1,000,000-signal test profile;
 - stress profiles for DataSets/RCBs/sessions;
 - 24h soak;
 - regression budgets.
@@ -274,12 +273,12 @@ See [SCALABILITY.md](SCALABILITY.md).
 
 Exit gate:
 
-- million-point L profile passes published benchmark criteria;
+- representative large-model profiles remain responsive and bounded without structural performance cliffs;
 - hot-path complexity matches documented targets;
 - browser remains responsive through paging/lazy load;
 - memory/latency/throughput evidence is published.
 
-Only after this gate may releases claim validated million-point capability.
+A specific numeric scale claim is optional; if a future release makes one, it must be separately measured and documented.
 
 ## P10 — Security and operational hardening
 
@@ -358,6 +357,6 @@ Exit gate for 1.0:
 
 Do not postpone architectural correctness to P9.
 
-P9 is where million-scale capability is **proven and tuned**, not where avoidable O(N) scans, unbounded queues, UI-owned state, or per-update allocation are first recognized.
+P9 is where high-scale behavior is **hardened and tuned**, not where avoidable O(N) scans, unbounded queues, UI-owned state, or per-update allocation are first recognized.
 
 Every preceding phase must preserve the scale path defined in [../AGENTS.md](../AGENTS.md) and [ENGINEERING_STANDARD.md](ENGINEERING_STANDARD.md).
