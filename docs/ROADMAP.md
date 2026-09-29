@@ -111,7 +111,7 @@ Detailed audit: [SCALABILITY_AUDIT.md](SCALABILITY_AUDIT.md)
 - [ ] cursor-aware observer ring reads
 - [ ] deterministic 100k-signal benchmark profile and baseline
 
-Exit: known high-cardinality blockers are removed before the P5 client duplicates or depends on them. The formal one-million-signal certification remains P9.
+Exit: known high-cardinality blockers are removed before the P5 client duplicates or depends on them. P9 remains the broader performance-hardening phase; no fixed signal-count certification is required.
 
 ## P5 — Native reference client in this repository
 
@@ -158,7 +158,7 @@ Netbeheer remains a test oracle only.
 - [ ] conformance-test mapping when stable public procedures exist
 
 
-## P9 — Million-point architecture and performance certification
+## P9 — High-scale architecture and performance hardening
 
 Detailed plan: [SCALABILITY.md](SCALABILITY.md)
 
@@ -172,12 +172,11 @@ Detailed plan: [SCALABILITY.md](SCALABILITY.md)
 - [ ] reusable/pool-backed hot-path buffers where measurement justifies them
 - [ ] deterministic large-model generator
 - [ ] machine-readable benchmark runner
-- [ ] 1,000,000-leaf-signal benchmark profile
 - [ ] DataSet/RCB/session stress profiles
 - [ ] memory/latency/throughput report
 - [ ] 24-hour soak and regression budgets
 
-Exit: the million-point L profile passes published acceptance gates. Only then may releases claim validated million-point capability.
+Exit: high-cardinality hot paths are indexed/bounded, browser APIs are incremental, schedulers avoid global scans, and representative regression profiles show no freezing, runaway memory, or structural performance cliff. A numeric scale claim is optional and only published if separately measured.
 
 ## P10 — Security and operational hardening
 
