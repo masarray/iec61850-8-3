@@ -98,6 +98,10 @@ int main() {
     assert(model->body.find("LD0/MMXU1.TotW.mag.f") != std::string::npos);
     assert(model->body.find("DataSetActualValues") != std::string::npos);
     assert(model->body.find("\"fc\":\"MX\"") != std::string::npos);
+    assert(model->body.find("\"reportControls\"") != std::string::npos);
+    assert(model->body.find("LD0/LLN0.rcbActualValues") != std::string::npos);
+    assert(model->body.find("\"kind\":\"URCB\"") != std::string::npos);
+    assert(model->body.find("\"dchg\":true") != std::string::npos);
 
     auto mutate = client.post(
         control.base_uri() +
