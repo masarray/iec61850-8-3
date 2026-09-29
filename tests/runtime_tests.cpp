@@ -150,8 +150,25 @@ int main() {
     assert(dchg_report.entries.size() == 1);
     assert(dchg_report.entries.front().reason.data_change);
 
+    Quality questionable;
+    questionable.validity = Validity::Questionable;
+    assert(runtime.set_quality("LD0/MMXU1.TotW.q", questionable));
+    const auto qchg_wire = wire->wait_for_message(5);
+    assert(!qchg_wire.empty());
+    const auto qchg = codec.decode(qchg_wire);
+    assert(qchg.message_class == MessageClass::Unconfirmed);
+    assert(qchg.service == ServiceKind::Report);
+    const auto& qchg_report = std::get<ReportPdu>(qchg.payload);
+    assert(qchg_report.entries.size() == 1);
+    assert(qchg_report.entries.front().reason.quality_change);
+
+    const auto delivered_reports = runtime.report_snapshot();
+    assert(delivered_reports.size() >= 3);
+    assert(delivered_reports[0].report.entries.front().reason.general_interrogation);
+    assert(delivered_reports.back().report.entries.front().reason.quality_change);
+
     const auto traces = runtime.trace_snapshot();
-    assert(traces.size() >= 8);
+    assert(traces.size() >= 10);
     assert(runtime.dropped_messages() == 0);
 
     runtime.stop();
