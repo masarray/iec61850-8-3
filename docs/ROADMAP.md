@@ -83,11 +83,20 @@ Exit: a user can launch one executable/service, open the browser, inspect the IE
 - [x] GI command semantics + full DataSet report evidence
 - [x] trigger options encode/decode and state validation
 - [x] unconfirmed Report BER encode/decode
-- [~] event-driven report delivery over DMS transport + trace/API visibility; dedicated browser report stream remains
-- [~] sequence increment + confRev carried in reports; continuity/fault tests remain
-- [x] no hidden cyclic read fallback
+- [x] true event-driven dchg reporting from canonical value changes
+- [x] qchg reporting from canonical Quality changes
+- [x] dupd reporting for same-value data updates
+- [x] BufTm event coalescing with per-member reason preservation
+- [x] periodic integrity reporting on the native scheduler
+- [x] sequence-number continuity and ConfRev advancement tests
+- [x] bounded BRCB journal with EntryID, PurgeBuf and BufOvfl
+- [x] BRCB replay by EntryID, including association reconnect
+- [x] bounded delivered-report observation API
+- [x] engineer-focused browser RCB tree and live Reports workspace
+- [x] quality mutation controls for deterministic qchg testing
+- [x] report delivery uses the DMS transport path; no hidden cyclic read fallback
 
-Exit: a simulator value change reaches a subscribed client through a real report and updates the browser in real time.
+Exit: a simulator value/quality change, GI, data update or integrity timer reaches a subscribed client through a real unconfirmed report and is visible in the browser report monitor.
 
 ## P5 — Native reference client in this repository
 
