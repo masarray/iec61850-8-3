@@ -120,6 +120,33 @@ Exit gate:
 - bounded buffering under overload;
 - reconnect/replay behavior deterministic.
 
+## P4S — Immediate scale-foundation refactor
+
+Goal: remove known correctness-first algorithms that would become expensive architectural debt if P5 grew on top of them.
+
+Current findings and exact targets are documented in [SCALABILITY_AUDIT.md](SCALABILITY_AUDIT.md).
+
+Work:
+
+- stable IDs and model finalization indexes;
+- indexed external-reference resolution;
+- reverse point/member -> RCB subscription index;
+- due-time integrity scheduler rather than all-RCB tick scanning;
+- global BRCB storage budget;
+- paged/lazy engineering APIs;
+- cursor-aware trace/report reads;
+- deterministic 100k-signal architecture benchmark.
+
+Exit gate:
+
+- ordinary point update does not inspect every RCB;
+- timer tick does not inspect every RCB;
+- browser navigation does not require copying/serializing the complete model;
+- high-cardinality buffers have both local and global budgets;
+- 100k benchmark profile establishes a regression baseline.
+
+This phase happens before broad P5 feature work so client/server implementations share scalable patterns instead of duplicating small-model assumptions.
+
 ## P5 — Native reference client
 
 Goal: create an independent client implementation in this repository.
