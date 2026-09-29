@@ -155,6 +155,7 @@ struct SetReportControlValuesRequest {
     std::optional<std::string> report_id;
     std::optional<bool> enabled;
     std::optional<std::string> data_set;
+    std::optional<Bytes> entry_id;
     std::optional<std::uint32_t> buffer_time_ms;
     std::optional<std::uint32_t> integrity_period_ms;
     std::optional<TriggerOptions> triggers;
