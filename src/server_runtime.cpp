@@ -11,11 +11,13 @@ ServerRuntime::ServerRuntime(
     ServerCore core,
     std::unique_ptr<IWireTransport> transport,
     std::size_t max_pending_messages,
-    std::size_t trace_capacity)
+    std::size_t trace_capacity,
+    std::size_t report_capacity)
     : core_(std::move(core)),
       transport_(std::move(transport)),
       service_worker_(max_pending_messages),
-      trace_(trace_capacity) {
+      trace_(trace_capacity),
+      report_capacity_(std::max<std::size_t>(1, report_capacity)) {
     if (!transport_) throw std::invalid_argument("ServerRuntime requires a transport");
 
     transport_->set_receive_handler([this](Bytes payload) {
@@ -202,6 +204,26 @@ bool ServerRuntime::set_quality(
     }
 }
 
+std::vector<ObservedReport> ServerRuntime::report_snapshot() const {
+    std::scoped_lock lock(report_mutex_);
+    return std::vector<ObservedReport>(reports_.begin(), reports_.end());
+}
+
+void ServerRuntime::clear_reports() {
+    std::scoped_lock lock(report_mutex_);
+    reports_.clear();
+}
+
+void ServerRuntime::record_report(const ReportPdu& report) {
+    std::scoped_lock lock(report_mutex_);
+    if (reports_.size() >= report_capacity_) reports_.pop_front();
+    reports_.push_back(ObservedReport{
+        .sequence = next_report_sequence_++,
+        .observed_at = std::chrono::system_clock::now(),
+        .report = report
+    });
+}
+
 void ServerRuntime::on_receive(Bytes payload) {
     if (!running()) return;
 
@@ -241,6 +263,10 @@ void ServerRuntime::flush_unconfirmed() {
         const auto byte_count = wire.size();
         if (transport_->send(std::move(wire))) {
             trace_wire(Direction::Tx, pdu, byte_count);
+            if (pdu.service == ServiceKind::Report &&
+                std::holds_alternative<ReportPdu>(pdu.payload)) {
+                record_report(std::get<ReportPdu>(pdu.payload));
+            }
         } else {
             emit(
                 RuntimeEvent::Kind::TransportDisconnected,
