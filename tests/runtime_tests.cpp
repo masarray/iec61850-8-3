@@ -109,8 +109,49 @@ int main() {
     assert(result.logical_devices.size() == 1);
     assert(result.logical_devices[0] == "LD0");
 
+    DmsPdu set_urcb;
+    set_urcb.message_class = MessageClass::Request;
+    set_urcb.service = ServiceKind::SetUrcbValues;
+    set_urcb.associate_id = "id_cp1";
+    set_urcb.invoke_id = 1;
+    SetReportControlValuesRequest set_values;
+    set_values.reference = "LD0/LLN0.rcbActualValues";
+    set_values.enabled = true;
+    set_values.gi = true;
+    set_values.triggers = TriggerOptions{
+        .data_change = true,
+        .quality_change = true,
+        .general_interrogation = true
+    };
+    set_urcb.payload = set_values;
+
+    wire->inject(codec.encode(set_urcb));
+    const auto set_response_wire = wire->wait_for_message(2);
+    assert(!set_response_wire.empty());
+    const auto set_response = codec.decode(set_response_wire);
+    assert(set_response.service == ServiceKind::SetUrcbValues);
+
+    const auto gi_wire = wire->wait_for_message(3);
+    assert(!gi_wire.empty());
+    const auto gi = codec.decode(gi_wire);
+    assert(gi.message_class == MessageClass::Unconfirmed);
+    assert(gi.service == ServiceKind::Report);
+    const auto& gi_report = std::get<ReportPdu>(gi.payload);
+    assert(gi_report.entries.size() == 11);
+    assert(gi_report.entries.front().reason.general_interrogation);
+
+    assert(runtime.set_float("LD0/MMXU1.TotW.mag.f", 88.0F));
+    const auto dchg_wire = wire->wait_for_message(4);
+    assert(!dchg_wire.empty());
+    const auto dchg = codec.decode(dchg_wire);
+    assert(dchg.message_class == MessageClass::Unconfirmed);
+    assert(dchg.service == ServiceKind::Report);
+    const auto& dchg_report = std::get<ReportPdu>(dchg.payload);
+    assert(dchg_report.entries.size() == 1);
+    assert(dchg_report.entries.front().reason.data_change);
+
     const auto traces = runtime.trace_snapshot();
-    assert(traces.size() >= 4);
+    assert(traces.size() >= 10);
     assert(runtime.dropped_messages() == 0);
 
     runtime.stop();
