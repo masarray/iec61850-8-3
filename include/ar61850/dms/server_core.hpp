@@ -28,23 +28,24 @@ public:
     const std::string& associate_id() const noexcept { return associate_id_; }
     const IedModel& model() const noexcept { return model_; }
     IedModel model_snapshot() const { return model_; }
-    bool set_float(std::string_view reference, float value) noexcept {
-        return model_.set_float(reference, value);
-    }
+    bool set_float(std::string_view reference, float value) noexcept;
     bool set_float_batch(
-        const std::vector<std::pair<std::string, float>>& updates) noexcept {
-        return model_.set_float_batch(updates);
-    }
+        const std::vector<std::pair<std::string, float>>& updates) noexcept;
+    std::vector<DmsPdu> drain_unconfirmed();
 
 private:
     DmsPdu error_for(const DmsPdu& request, ServiceStatus status) const;
     bool validate_association(const DmsPdu& request) const noexcept;
+    void enqueue_reports_for_changes(
+        const std::vector<std::string>& changed_references);
+    void enqueue_gi_report(ReportControlState& state);
 
     ProtocolCodec codec_;
     IedModel model_;
     ServerConfig config_;
     bool associated_{false};
     std::string associate_id_;
+    std::vector<DmsPdu> pending_unconfirmed_;
 };
 
 } // namespace ar61850::dms
