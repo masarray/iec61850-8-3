@@ -31,13 +31,13 @@ std::string_view workbench_page_html() noexcept {
 }
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:13px/1.45 Inter,Segoe UI,system-ui,sans-serif}
-button,input{font:inherit}
+button,input,select{font:inherit}
 button{border:1px solid var(--line);background:#fff;color:var(--text);border-radius:6px;padding:6px 9px;cursor:pointer}
 button:hover{border-color:#b9c5d1;background:#f9fbfd}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button.danger{color:var(--bad)}
-input{border:1px solid var(--line);border-radius:6px;background:#fff;padding:6px 8px;color:var(--text);outline:none}
-input:focus{border-color:#8fb0f8;box-shadow:0 0 0 2px rgba(47,111,237,.08)}
+input,select{border:1px solid var(--line);border-radius:6px;background:#fff;padding:6px 8px;color:var(--text);outline:none}
+input:focus,select:focus{border-color:#8fb0f8;box-shadow:0 0 0 2px rgba(47,111,237,.08)}
 .app{height:100%;display:grid;grid-template-rows:42px 1fr}
 .topbar{display:flex;align-items:center;gap:14px;padding:0 14px;background:#fff;border-bottom:1px solid var(--line);box-shadow:var(--shadow)}
 .brand{font-weight:600;letter-spacing:.1px;white-space:nowrap}
@@ -363,12 +363,23 @@ function renderSignals(){
   const rows=S.signals.filter(a=>!q||(a.ref+' '+a.fc+' '+a.type).toLowerCase().includes(q));
   $('signalCount').textContent=`${rows.length} / ${S.signals.length} leaf signals`;
   $('signalRows').innerHTML=rows.map(a=>{
-    const editable=a.type==='float32';
-    return `<tr><td class="mono">${esc(a.ref)}</td><td><span class="fc">${esc(a.fc)}</span></td><td>${esc(a.type)}</td><td class="value">${esc(scalarText(a.value))}</td><td>${editable?`<input class="mini-input" data-ref="${esc(a.ref)}" value="${esc(a.value)}"><button data-write="${esc(a.ref)}">Write</button>`:'<span class="note">read-only</span>'}</td></tr>`;
+    let editor='<span class="note">read-only</span>';
+    if(a.type==='float32'){
+      editor=`<input class="mini-input" data-ref="${esc(a.ref)}" value="${esc(a.value)}"><button data-write="${esc(a.ref)}">Write</button>`;
+    }else if(a.type==='quality'){
+      const v=Number(a.value?.validity??0);
+      editor=`<select data-quality-ref="${esc(a.ref)}"><option value="good" ${v===0?'selected':''}>Good</option><option value="questionable" ${v===3?'selected':''}>Questionable</option><option value="invalid" ${v===1?'selected':''}>Invalid</option><option value="reserved" ${v===2?'selected':''}>Reserved</option></select><button data-quality-write="${esc(a.ref)}">Set</button>`;
+    }
+    return `<tr><td class="mono">${esc(a.ref)}</td><td><span class="fc">${esc(a.fc)}</span></td><td>${esc(a.type)}</td><td class="value">${esc(scalarText(a.value))}</td><td>${editor}</td></tr>`;
   }).join('')||'<tr><td colspan="5" class="empty">No matching signals.</td></tr>';
   document.querySelectorAll('[data-write]').forEach(b=>b.onclick=async()=>{
     const ref=b.dataset.write;const inp=document.querySelector(`input[data-ref="${CSS.escape(ref)}"]`);
     try{await j('/api/signals/float?ref='+encodeURIComponent(ref)+'&value='+encodeURIComponent(inp.value),{method:'POST'});await refreshModel(false)}
+    catch(e){alert(e.message)}
+  });
+  document.querySelectorAll('[data-quality-write]').forEach(b=>b.onclick=async()=>{
+    const ref=b.dataset.qualityWrite;const sel=document.querySelector(`select[data-quality-ref="${CSS.escape(ref)}"]`);
+    try{await j('/api/signals/quality?ref='+encodeURIComponent(ref)+'&validity='+encodeURIComponent(sel.value)+'&source=process',{method:'POST'});await refreshModel(false)}
     catch(e){alert(e.message)}
   });
 }
