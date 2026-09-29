@@ -140,10 +140,182 @@ void apply_rcb_write(
     }
 }
 
+std::optional<DataAttributeValue> make_member_value(
+    const IedModel& model,
+    const DataSetMemberModel& member) {
+    if (const auto* attr = model.find_data_attribute(member.reference)) {
+        if (!attribute_matches_fc(*attr, member.fc)) return std::nullopt;
+        return make_filtered_attribute_value(*attr, member.fc, false);
+    }
+
+    const auto* object = model.find_data_object(member.reference);
+    if (!object) return std::nullopt;
+    auto value = make_data_object_value(*object, member.fc, false);
+    if (value.children.empty()) return std::nullopt;
+    return value;
+}
+
+bool reference_affects_member(
+    std::string_view changed,
+    std::string_view member) {
+    if (changed == member) return true;
+    if (changed.size() > member.size() &&
+        changed.compare(0, member.size(), member) == 0 &&
+        changed[member.size()] == '.') {
+        return true;
+    }
+    if (member.size() > changed.size() &&
+        member.compare(0, changed.size(), changed) == 0 &&
+        member[changed.size()] == '.') {
+        return true;
+    }
+    return false;
+}
+
+ReportPdu build_report(
+    IedModel& model,
+    ReportControlState& state,
+    const ReasonForInclusion& reason,
+    const std::vector<std::string>* changed_references) {
+    ReportPdu report;
+    report.report_id = state.report_id;
+    if (state.optional_fields.sequence_number) {
+        report.sequence_number = state.sequence_number;
+    }
+    if (state.optional_fields.data_set) report.data_set = state.data_set;
+    if (state.optional_fields.config_revision) report.conf_rev = state.conf_rev;
+    if (state.optional_fields.timestamp) {
+        Timestamp now;
+        now.value = std::chrono::system_clock::now();
+        report.time_of_entry = now;
+    }
+    if (state.buffered && state.optional_fields.entry_id) {
+        report.entry_id = state.entry_id.empty() ? Bytes(8, 0) : state.entry_id;
+    }
+
+    const auto* data_set = model.find_data_set(state.data_set);
+    if (!data_set) return report;
+
+    for (const auto& member : data_set->members) {
+        if (changed_references) {
+            const bool affected = std::any_of(
+                changed_references->begin(),
+                changed_references->end(),
+                [&](const std::string& changed) {
+                    return reference_affects_member(
+                        changed, member.reference);
+                });
+            if (!affected) continue;
+        }
+
+        auto value = make_member_value(model, member);
+        if (!value) continue;
+
+        ReportEntryData entry;
+        entry.data_reference = member.reference;
+        entry.values.push_back(std::move(*value));
+        entry.reason = reason;
+        report.entries.push_back(std::move(entry));
+    }
+
+    state.sequence_number =
+        static_cast<std::uint16_t>(state.sequence_number + 1U);
+    return report;
+}
+
 } // namespace
 
 ServerCore::ServerCore(IedModel model, ServerConfig config)
     : model_(std::move(model)), config_(std::move(config)) {}
+
+
+bool ServerCore::set_float(
+    std::string_view reference,
+    float value) noexcept {
+    if (!model_.set_float(reference, value)) return false;
+    enqueue_reports_for_changes({std::string(reference)});
+    return true;
+}
+
+bool ServerCore::set_float_batch(
+    const std::vector<std::pair<std::string, float>>& updates) noexcept {
+    if (!model_.set_float_batch(updates)) return false;
+    std::vector<std::string> changed;
+    changed.reserve(updates.size());
+    for (const auto& [reference, value] : updates) {
+        (void) value;
+        changed.push_back(reference);
+    }
+    enqueue_reports_for_changes(changed);
+    return true;
+}
+
+std::vector<DmsPdu> ServerCore::drain_unconfirmed() {
+    auto pending = std::move(pending_unconfirmed_);
+    pending_unconfirmed_.clear();
+    return pending;
+}
+
+void ServerCore::enqueue_reports_for_changes(
+    const std::vector<std::string>& changed_references) {
+    if (!associated_ || changed_references.empty()) return;
+
+    for (auto& ld : model_.logical_devices()) {
+        for (auto& ln : ld.logical_nodes) {
+            for (auto& state : ln.report_controls) {
+                if (!state.enabled || !state.triggers.data_change) continue;
+                const auto* data_set = model_.find_data_set(state.data_set);
+                if (!data_set) continue;
+
+                const bool relevant = std::any_of(
+                    data_set->members.begin(),
+                    data_set->members.end(),
+                    [&](const DataSetMemberModel& member) {
+                        return std::any_of(
+                            changed_references.begin(),
+                            changed_references.end(),
+                            [&](const std::string& changed) {
+                                return reference_affects_member(
+                                    changed, member.reference);
+                            });
+                    });
+                if (!relevant) continue;
+
+                ReasonForInclusion reason;
+                reason.data_change = true;
+                auto report = build_report(
+                    model_, state, reason, &changed_references);
+                if (report.entries.empty()) continue;
+
+                DmsPdu pdu;
+                pdu.message_class = MessageClass::Unconfirmed;
+                pdu.service = ServiceKind::Report;
+                pdu.associate_id = associate_id_;
+                pdu.payload = std::move(report);
+                pending_unconfirmed_.push_back(std::move(pdu));
+            }
+        }
+    }
+}
+
+void ServerCore::enqueue_gi_report(ReportControlState& state) {
+    if (!associated_ || !state.enabled ||
+        !state.triggers.general_interrogation) {
+        return;
+    }
+
+    ReasonForInclusion reason;
+    reason.general_interrogation = true;
+    auto report = build_report(model_, state, reason, nullptr);
+    if (report.entries.empty()) return;
+
+    DmsPdu pdu;
+    pdu.message_class = MessageClass::Unconfirmed;
+    pdu.service = ServiceKind::Report;
+    pdu.associate_id = associate_id_;
+    pdu.payload = std::move(report);
+    pending_unconfirmed_.push_back(std::move(pdu));
+}
 
 bool ServerCore::validate_association(const DmsPdu& request) const noexcept {
     return associated_ && !request.associate_id.empty() && request.associate_id == associate_id_;
@@ -172,6 +344,7 @@ std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
         const auto called_ap = associate.called_ap.value_or("cp1");
         associate_id_ = config_.associate_id_prefix + called_ap;
         associated_ = true;
+        pending_unconfirmed_.clear();
 
         DmsPdu rsp;
         rsp.message_class = MessageClass::Association;
@@ -199,6 +372,7 @@ std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
 
         associated_ = false;
         associate_id_.clear();
+        pending_unconfirmed_.clear();
         return rsp;
     }
 
@@ -443,6 +617,10 @@ std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
         }
 
         apply_rcb_write(*state, req);
+        if (req.gi && *req.gi) {
+            enqueue_gi_report(*state);
+            state->gi = false;
+        }
         rsp.payload = SetReportControlValuesResponse{.ok = true};
         return rsp;
     }
