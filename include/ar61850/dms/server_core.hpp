@@ -59,8 +59,8 @@ private:
 
     struct PendingTriggerBatch {
         std::chrono::steady_clock::time_point due{};
-        std::vector<std::string> references;
-        ReasonForInclusion reason;
+        std::unordered_map<std::string, ReasonForInclusion>
+            reasons_by_reference;
     };
 
     DmsPdu error_for(const DmsPdu& request, ServiceStatus status) const;
