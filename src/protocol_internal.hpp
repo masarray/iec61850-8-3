@@ -404,9 +404,14 @@ inline Timestamp decode_timestamp_sequence(
     }
     const auto nanos = static_cast<std::int64_t>(
         static_cast<long double>(fraction) * 1000000000.0L / 16777216.0L);
+    const auto whole = std::chrono::duration_cast<
+        std::chrono::system_clock::duration>(
+            std::chrono::seconds{static_cast<std::int64_t>(seconds)});
+    const auto fractional = std::chrono::duration_cast<
+        std::chrono::system_clock::duration>(
+            std::chrono::nanoseconds{nanos});
     timestamp.value = std::chrono::system_clock::time_point{
-        std::chrono::seconds{static_cast<std::int64_t>(seconds)}} +
-        std::chrono::nanoseconds{nanos};
+        whole + fractional};
     return timestamp;
 }
 
