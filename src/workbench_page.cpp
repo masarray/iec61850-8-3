@@ -88,7 +88,7 @@ tr:hover td{background:#fbfcfd}
 .value{font-family:var(--mono)}
 .value.good{color:var(--good)}.value.null{color:#98a2b3}
 .mini-input{width:110px;font-family:var(--mono);padding:4px 6px}
-.inspector{height:100%;display:grid;grid-template-rows:42px 1fr;min-height:0}
+.inspector,.reports{height:100%;display:grid;grid-template-rows:42px 1fr;min-height:0}
 .tracewrap{overflow:auto;background:#fff}
 .dir{font:10px var(--mono);font-weight:700}.dir.RX{color:var(--rx)}.dir.TX{color:var(--tx)}
 .empty{padding:30px;color:var(--muted);text-align:center}
@@ -114,6 +114,7 @@ tr:hover td{background:#fbfcfd}
       <button class="active" data-view="server">Server</button>
       <button data-view="model">Model</button>
       <button data-view="signals">Signals</button>
+      <button data-view="reports">Reports</button>
       <button data-view="inspector">Inspector</button>
       <div class="section">Lab</div>
       <button id="reloadBtn">Refresh</button>
@@ -131,6 +132,7 @@ tr:hover td{background:#fbfcfd}
                 <div class="k">Model</div><div class="code">IED1 / LD0</div>
                 <div class="k">Profile</div><div class="code">iec61850-tpaa-ber-v1</div>
                 <div class="k">Trace events</div><div id="svTrace">0</div>
+                <div class="k">Delivered reports</div><div id="svReports">0</div>
               </div>
               <div class="toolbar" style="margin-top:14px">
                 <button id="startTransport" class="primary">Start transport</button>
@@ -197,6 +199,21 @@ tr:hover td{background:#fbfcfd}
         </div>
       </section>
 
+      <section id="view-reports" class="view reports">
+        <div class="subbar">
+          <input id="reportSearch" placeholder="Filter RptID, DataSet or reason">
+          <label class="small note"><input id="reportAutoFollow" type="checkbox" checked> auto follow</label>
+          <span id="reportCount" class="note small"></span>
+          <button class="right" id="clearReports">Clear</button>
+        </div>
+        <div id="reportWrap" class="tracewrap">
+          <table>
+            <thead><tr><th>#</th><th>Time</th><th>RptID</th><th>DataSet</th><th>SqNum</th><th>ConfRev</th><th>Reason</th><th>Entries</th><th>EntryID</th></tr></thead>
+            <tbody id="reportRows"></tbody>
+          </table>
+        </div>
+      </section>
+
       <section id="view-inspector" class="view inspector">
         <div class="subbar">
           <input id="traceSearch" placeholder="Filter service, direction, associate ID">
@@ -215,7 +232,7 @@ tr:hover td{background:#fbfcfd}
   </div>
 </div>
 <script>
-const S={health:null,model:null,signals:[],traces:[],lastSeq:0,selected:null,view:'server'};
+const S={health:null,model:null,signals:[],traces:[],lastSeq:0,reports:[],lastReportSeq:0,selected:null,view:'server'};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const j=async(url,opt={})=>{
@@ -236,6 +253,7 @@ function renderHealth(){
   $('svTransport').textContent=h.transportActive?'Active':'Stopped';
   $('svPeer').textContent=h.transportConnected?'Connected':'Waiting / disconnected';
   $('svTrace').textContent=h.traceCount??S.traces.length;
+  $('svReports').textContent=h.reportCount??S.reports.length;
   $('startTransport').disabled=!!h.transportActive;
   $('stopTransport').disabled=!h.transportActive;
 }
@@ -266,9 +284,9 @@ function allSignals(model){
   return out;
 }
 function countModel(m){
-  let ld=0,ln=0,dobj=0,da=0,ds=0;
-  for(const d of m?.logicalDevices||[]){ld++;for(const n of d.logicalNodes||[]){ln++;ds+=(n.dataSets||[]).length;const wo=o=>{dobj++;const wa=a=>{da++;for(const c of a.children||[])wa(c)};for(const a of o.dataAttributes||[])wa(a);for(const c of o.dataObjects||[])wo(c)};for(const o of n.dataObjects||[])wo(o)}}
-  return {ld,ln,dobj,da,ds};
+  let ld=0,ln=0,dobj=0,da=0,ds=0,rcb=0;
+  for(const d of m?.logicalDevices||[]){ld++;for(const n of d.logicalNodes||[]){ln++;ds+=(n.dataSets||[]).length;rcb+=(n.reportControls||[]).length;const wo=o=>{dobj++;const wa=a=>{da++;for(const c of a.children||[])wa(c)};for(const a of o.dataAttributes||[])wa(a);for(const c of o.dataObjects||[])wo(c)};for(const o of n.dataObjects||[])wo(o)}}
+  return {ld,ln,dobj,da,ds,rcb};
 }
 function treeRow(label,ref,kind,depth,node){
   const row=document.createElement('div');row.className='tree-row';row.dataset.ref=ref;row.style.paddingLeft=(6+depth*13)+'px';
@@ -298,9 +316,13 @@ function renderTree(){
           if(matches(member.ref,member.ref))root.appendChild(treeRow(member.ref.split('.').pop(),member.ref,'M',3,member));
         }
       }
+      for(const rcb of ln.reportControls||[]){
+        const label=(rcb.ref||'').split('.').pop()||rcb.rptId||'RCB';
+        if(matches(label,rcb.ref||''))root.appendChild(treeRow(label,rcb.ref||'',rcb.kind||'RCB',2,rcb));
+      }
     }
   }
-  const stats=countModel(S.model);$('modelStats').textContent=`${stats.ld} LD · ${stats.ln} LN · ${stats.dobj} DO · ${stats.da} DA · ${stats.ds} DS`;
+  const stats=countModel(S.model);$('modelStats').textContent=`${stats.ld} LD · ${stats.ln} LN · ${stats.dobj} DO · ${stats.da} DA · ${stats.ds} DS · ${stats.rcb} RCB`;
 }
 function detailLeaves(node){
   if(node?.dataAttributes)return flattenAttrs(node.dataAttributes,[]);
@@ -311,10 +333,28 @@ function renderDataSetDetail(node){
   const rows=node?.members||[];
   $('detailRows').innerHTML=rows.length?rows.map((m,i)=>`<tr><td>#${i+1}</td><td><span class="fc">${esc(m.fc||'')}</span></td><td>DataSet member</td><td class="note">—</td><td class="mono">${esc(m.ref||'')}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">DataSet has no members.</td></tr>';
 }
+function renderRcbDetail(node){
+  const t=node.trgOps||{},o=node.optFlds||{};
+  const trigger=[t.dchg&&'dchg',t.qchg&&'qchg',t.dupd&&'dupd',t.integrity&&'integrity',t.gi&&'GI'].filter(Boolean).join(', ')||'none';
+  const opts=[o.seqNum&&'SqNum',o.timeStamp&&'TimeStamp',o.dataSet&&'DataSet',o.bufOvfl&&'BufOvfl',o.confRev&&'ConfRev',o.entryId&&'EntryID',o.dataRef&&'DataRef',o.reasonCode&&'Reason'].filter(Boolean).join(', ')||'none';
+  const rows=[
+    ['Type','',node.kind||'RCB',node.enabled?'RptEna = ON':'RptEna = OFF',node.ref||''],
+    ['RptID','', 'report identity',node.rptId||'—',''],
+    ['DataSet','', 'reference',node.dataSet||'—',node.dataSet||''],
+    ['ConfRev','', 'revision',node.confRev??'—',''],
+    ['SqNum','', 'sequence',node.sqNum??'—',''],
+    ['BufTm','', 'milliseconds',(node.bufTmMs??0)+' ms',''],
+    ['IntgPd','', 'milliseconds',(node.intgPdMs??0)+' ms',''],
+    ['TrgOps','', 'trigger options',trigger,''],
+    ['OptFlds','', 'report fields',opts,'']
+  ];
+  $('detailRows').innerHTML=rows.map(x=>`<tr><td>${esc(x[0])}</td><td>${x[1]?'<span class="fc">'+esc(x[1])+'</span>':'—'}</td><td>${esc(x[2])}</td><td class="value">${esc(x[3])}</td><td class="mono">${esc(x[4])}</td></tr>`).join('');
+}
 function selectNode(ref,node,row){
   S.selected={ref,node};document.querySelectorAll('.tree-row.sel').forEach(x=>x.classList.remove('sel'));row?.classList.add('sel');
   $('detailTitle').textContent=node.name||ref;$('detailRef').textContent=ref;
   if(node?.members){renderDataSetDetail(node);return}
+  if(node?.kind&&(node.kind==='BRCB'||node.kind==='URCB')){renderRcbDetail(node);return}
   if(node?.fc&&node?.ref&&!node?.type){$('detailRows').innerHTML=`<tr><td>Member</td><td><span class="fc">${esc(node.fc)}</span></td><td>DataSet member</td><td class="note">—</td><td class="mono">${esc(node.ref)}</td></tr>`;return}
   const rows=detailLeaves(node);$('detailRows').innerHTML=rows.length?rows.map(a=>`<tr><td>${esc(a.name)}</td><td><span class="fc">${esc(a.fc||'')}</span></td><td>${esc(a.type||'')}</td><td class="value">${esc(scalarText(a.value))}</td><td class="mono">${esc(a.ref||'')}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">Select a data object, attribute, or DataSet to inspect it.</td></tr>';
 }
@@ -336,6 +376,24 @@ async function refreshModel(render=true){
   try{S.model=await j('/api/model');S.signals=allSignals(S.model);if(render){renderTree();renderSignals();if(S.selected){const found=S.signals.find(x=>x.ref===S.selected.ref);if(found)$('detailRows').innerHTML=`<tr><td>${esc(found.name)}</td><td><span class="fc">${esc(found.fc)}</span></td><td>${esc(found.type)}</td><td class="value">${esc(scalarText(found.value))}</td><td class="mono">${esc(found.ref)}</td></tr>`}}else{renderSignals()}}
   catch(e){}
 }
+function reportReasons(r){
+  const s=new Set();
+  for(const e of r.entries||[]){const x=e.reason||{};if(x.dchg)s.add('dchg');if(x.qchg)s.add('qchg');if(x.dupd)s.add('dupd');if(x.integrity)s.add('integrity');if(x.gi)s.add('GI');if(x.app)s.add('app')}
+  return [...s].join(', ')||'—';
+}
+function renderReports(){
+  const q=$('reportSearch').value.trim().toLowerCase();
+  const rows=S.reports.filter(r=>!q||((r.rptId||'')+' '+(r.dataSet||'')+' '+reportReasons(r)).toLowerCase().includes(q));
+  $('reportCount').textContent=`${rows.length} shown · last #${S.lastReportSeq||0}`;
+  $('reportRows').innerHTML=rows.map(r=>`<tr><td class="mono">${r.sequence}</td><td class="mono">${new Date(r.epochMs).toLocaleTimeString()}</td><td>${esc(r.rptId||'—')}</td><td class="mono">${esc(r.dataSet||'—')}</td><td class="mono">${r.sqNum??'—'}</td><td class="mono">${r.confRev??'—'}</td><td><span class="badge">${esc(reportReasons(r))}</span>${r.bufOvfl?' <span class="badge">BufOvfl</span>':''}</td><td class="mono">${(r.entries||[]).length}</td><td class="mono">${esc(r.entryId||'—')}</td></tr>`).join('')||'<tr><td colspan="9" class="empty">No reports delivered yet. Enable an RCB from a DMS client, issue GI, or trigger a configured event.</td></tr>';
+  if($('reportAutoFollow').checked){const w=$('reportWrap');w.scrollTop=w.scrollHeight}
+}
+async function pollReports(){
+  try{
+    const n=await j('/api/reports?after='+S.lastReportSeq+'&limit=500');
+    if(Array.isArray(n)&&n.length){S.reports.push(...n);if(S.reports.length>4000)S.reports=S.reports.slice(-4000);S.lastReportSeq=n[n.length-1].sequence;renderReports()}
+  }catch(e){}
+}
 function renderTraces(){
   const q=$('traceSearch').value.trim().toLowerCase();
   const rows=S.traces.filter(t=>!q||((t.service||'')+' '+(t.direction||'')+' '+(t.associateId||'')).toLowerCase().includes(q));
@@ -353,22 +411,23 @@ async function post(path){try{await j(path,{method:'POST'});await refreshHealth(
 document.querySelectorAll('.nav button[data-view]').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.nav button[data-view]').forEach(x=>x.classList.toggle('active',x===b));
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));S.view=b.dataset.view;$('view-'+S.view).classList.add('active');
-  if(S.view==='model'||S.view==='signals')refreshModel(true);if(S.view==='inspector')renderTraces();
+  if(S.view==='model'||S.view==='signals')refreshModel(true);if(S.view==='reports')renderReports();if(S.view==='inspector')renderTraces();
 });
-$('treeSearch').oninput=renderTree;$('signalSearch').oninput=renderSignals;$('traceSearch').oninput=renderTraces;
+$('treeSearch').oninput=renderTree;$('signalSearch').oninput=renderSignals;$('reportSearch').oninput=renderReports;$('traceSearch').oninput=renderTraces;
 $('startTransport').onclick=()=>post('/api/runtime/transport/start');
 $('stopTransport').onclick=()=>post('/api/runtime/transport/stop');
 $('refreshServer').onclick=refreshHealth;$('reloadBtn').onclick=()=>{refreshHealth();refreshModel(true);pollTraces()};
 $('modelRefresh').onclick=()=>refreshModel(true);$('signalRefresh').onclick=()=>refreshModel(true);
 $('clearTrace').onclick=async()=>{await post('/api/traces/clear');S.traces=[];S.lastSeq=0;renderTraces()};
+$('clearReports').onclick=async()=>{await post('/api/reports/clear');S.reports=[];S.lastReportSeq=0;renderReports()};
 document.querySelectorAll('[data-scenario]').forEach(b=>b.onclick=async()=>{
   try{
     await j('/api/scenarios/'+encodeURIComponent(b.dataset.scenario),{method:'POST'});
     await refreshModel(true);
   }catch(e){alert(e.message)}
 });
-refreshHealth();refreshModel(true);pollTraces();
-setInterval(refreshHealth,1000);setInterval(()=>{if(S.view==='model'||S.view==='signals')refreshModel(false)},1500);setInterval(pollTraces,500);
+refreshHealth();refreshModel(true);pollReports();pollTraces();
+setInterval(refreshHealth,1000);setInterval(()=>{if(S.view==='model'||S.view==='signals')refreshModel(false)},1500);setInterval(pollReports,400);setInterval(pollTraces,500);
 </script>
 </body>
 </html>
