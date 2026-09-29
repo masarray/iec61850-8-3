@@ -2,14 +2,14 @@
 
 Date: 2026-09-29
 
-This audit exists to prevent the project from confusing a correct laboratory implementation with a million-scale implementation.
+This audit exists to prevent the project from confusing a correct laboratory implementation with a high-cardinality, responsive implementation.
 
 The P0–P4 feature set is functionally strong, but several current data paths are intentionally correctness-oriented and must be replaced **before additional feature growth makes them architectural debt**.
 
 ## Severity legend
 
 - **S0** — correctness/safety blocker
-- **S1** — must be refactored before million-scale work and preferably before P5 grows the same pattern
+- **S1** — must be refactored before high-scale work and preferably before P5 grows the same pattern
 - **S2** — bounded today but should be improved for large deployments
 
 ## 1. Per-update RCB scan — S1
@@ -26,7 +26,7 @@ O(all RCBs × membership checks)
 
 per mutation.
 
-This is acceptable for the deterministic lab model but fails the million-point design contract.
+This is acceptable for the deterministic lab model but fails the high-cardinality design contract.
 
 Required replacement:
 
@@ -83,7 +83,7 @@ The final resolved read/update path should not tokenize the same reference repea
 
 Current `ServerRuntime::model_snapshot()` copies an `IedModel`.
 
-That is clean and safe for the small laboratory model but cannot be the normal browser/read strategy for a million-point model.
+That is clean and safe for the small laboratory model but cannot be the normal browser/read strategy for a large model.
 
 Required replacement:
 
@@ -143,7 +143,7 @@ A local bound is not sufficient if the product of all local bounds is unbounded 
 
 Current typed structures favor readability and correctness, with strings stored in DataSet/report relationships.
 
-At million scale, relationship tables should store stable IDs, with names/references interned in metadata.
+At high cardinality, relationship tables should store stable IDs, with names/references interned in metadata.
 
 Required direction:
 
@@ -190,7 +190,7 @@ These should be preserved while high-cardinality internals evolve.
 
 P4S is inserted immediately after P4 and before broad P5 client feature growth.
 
-The goal is not to claim one-million validation yet. The goal is to remove known algorithms that would force architectural rollback later.
+The goal is not to claim a fixed numeric validation target yet. The goal is to remove known algorithms that would force architectural rollback later.
 
 ## P4S.1 Stable identity/index layer
 
@@ -234,14 +234,14 @@ The goal is not to claim one-million validation yet. The goal is to remove known
 
 Before P5:
 
-- [ ] deterministic 100k-signal generated model;
+- [ ] deterministic generated large-model profile;
 - [ ] lookup benchmark;
 - [ ] mutation benchmark;
 - [ ] sparse RCB fanout benchmark;
 - [ ] scheduler benchmark;
 - [ ] browser/API page benchmark.
 
-The 100k profile is an early architecture regression gate. P9 remains the formal 1,000,000-signal certification phase.
+The 100k profile is an early architecture regression gate. P9 remains the broader scale/performance hardening phase; no fixed point-count certification is required.
 
 ## P4S exit gate
 
@@ -252,6 +252,6 @@ P4S is complete when:
 - resolved hot paths can use indexed IDs;
 - ordinary browser navigation is paged/bounded;
 - BRCB storage has a global bound;
-- a 100k generated model can execute the baseline benchmark suite without architectural pathologies.
+- a representative generated large model can execute the baseline benchmark suite without architectural pathologies.
 
 Only after this gate should P5 copy/extend these data-access patterns into the native client.
