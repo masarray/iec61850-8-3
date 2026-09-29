@@ -345,6 +345,24 @@ int main() {
     assert(std::get<SetReportControlValuesResponse>(
         set_urcb_rsp_pdu.payload).ok);
 
+    auto pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    assert(pending_reports[0].message_class == MessageClass::Unconfirmed);
+    assert(pending_reports[0].service == ServiceKind::Report);
+    const auto gi_report_wire = codec.encode(pending_reports[0]);
+    const auto gi_report_pdu = codec.decode(gi_report_wire);
+    assert(gi_report_pdu.message_class == MessageClass::Unconfirmed);
+    assert(gi_report_pdu.service == ServiceKind::Report);
+    const auto& gi_report = std::get<ReportPdu>(gi_report_pdu.payload);
+    assert(gi_report.report_id == "DataSetActualValues");
+    assert(gi_report.data_set &&
+        *gi_report.data_set == "LD0/LLN0.DataSetActualValues");
+    assert(gi_report.conf_rev && *gi_report.conf_rev == 1);
+    assert(gi_report.entries.size() == 11);
+    assert(gi_report.entries[0].data_reference == "LD0/MMXU1.TotW");
+    assert(gi_report.entries[0].reason.general_interrogation);
+    assert(!gi_report.entries[0].values.empty());
+
     native_req.service = ServiceKind::GetUrcbValues;
     native_req.invoke_id = 24;
     native_req.payload = GetReportControlValuesRequest{
@@ -357,11 +375,26 @@ int main() {
         std::get<GetReportControlValuesResponse>(urcb_pdu.payload).state;
     assert(!urcb.buffered);
     assert(urcb.enabled);
-    assert(urcb.gi);
+    assert(!urcb.gi);
     assert(urcb.buffer_time_ms == 250);
     assert(urcb.triggers.data_change);
     assert(urcb.triggers.quality_change);
     assert(urcb.triggers.general_interrogation);
+
+    // Simulator mutation produces a true unconfirmed dchg report.
+    assert(server.set_float("LD0/MMXU1.TotW.mag.f", 77.25F));
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    const auto dchg_wire = codec.encode(pending_reports[0]);
+    const auto dchg_pdu = codec.decode(dchg_wire);
+    assert(dchg_pdu.message_class == MessageClass::Unconfirmed);
+    const auto& dchg_report = std::get<ReportPdu>(dchg_pdu.payload);
+    assert(dchg_report.entries.size() == 1);
+    assert(dchg_report.entries[0].data_reference == "LD0/MMXU1.TotW");
+    assert(dchg_report.entries[0].reason.data_change);
+    assert(!dchg_report.entries[0].reason.general_interrogation);
+    assert(dchg_report.entries[0].values.size() == 1);
+    assert(dchg_report.entries[0].values[0].type == DataType::Structure);
 
     // Configuration writes while RptEna remains true are rejected.
     native_req.service = ServiceKind::SetUrcbValues;
