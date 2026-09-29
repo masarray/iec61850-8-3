@@ -145,7 +145,7 @@ It is not linked, embedded, spawned, downloaded or required by the native runtim
 
 ## Scale architecture
 
-The correctness-oriented canonical tree remains the semantic source, but million-point operation requires data-oriented indexes around it and eventually a compact indexed storage representation.
+The correctness-oriented canonical tree remains the semantic source, but high-cardinality operation requires data-oriented indexes around it and eventually a compact indexed storage representation.
 
 Target runtime path:
 
@@ -179,9 +179,9 @@ The high-cardinality implementation must avoid:
 
 Model topology should become mostly immutable after finalization. Mutable values/report state are stored separately so updates do not copy or lock large metadata structures.
 
-The browser/control plane becomes cursor/paged/lazy at large scale. A slow browser remains outside the protocol critical path.
+The browser/control plane becomes cursor/paged/lazy as model size grows. A slow browser remains outside the protocol critical path.
 
-See [SCALABILITY.md](SCALABILITY.md) for benchmark gates and [../AGENTS.md](../AGENTS.md) for mandatory implementation rules.
+See [SCALABILITY.md](SCALABILITY.md) for high-cardinality design guidance and regression profiles, and [../AGENTS.md](../AGENTS.md) for mandatory implementation rules.
 
 ## Engineering change policy
 
