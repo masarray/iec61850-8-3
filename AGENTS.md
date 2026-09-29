@@ -22,7 +22,7 @@ Production paths MUST NOT rely on:
 - global locks around unrelated sessions or unrelated model partitions;
 - ad-hoc string parsing in every request when references can be resolved once into stable IDs;
 - exceptions as routine flow control in throughput-critical loops;
-- copying complete models or million-point collections to serve one UI request;
+- copying complete models or high-cardinality collections to serve one UI request;
 - JSON endpoints that require serializing the entire model for ordinary navigation;
 - “temporary” architecture that is known to require a rewrite in the next phase.
 
@@ -61,22 +61,23 @@ Every externally influenced resource needs an explicit bound or admission policy
 
 When the bound is reached, behavior must be deterministic: reject, shed, backpressure, paginate, or evict according to a documented policy.
 
-### 1.4 No unsupported performance claims
+### 1.4 No invented scale promises
 
-“Supports millions of signals” is a target until the relevant benchmark is green.
+“Millions of signals” is a **design metaphor for high-cardinality, non-laggy operation**, not a mandatory numeric product claim or certification target.
 
-Any README/release performance claim must name:
+The engineering requirement is structural:
 
-- commit/tag;
-- hardware and OS;
-- compiler and build type;
-- workload/model shape;
-- signal/session/report counts;
-- duration;
-- latency percentiles;
-- throughput;
-- memory high-water mark;
-- dropped/backpressured work.
+- no avoidable global scans on hot update/report paths;
+- bounded memory/queues/journals;
+- indexed lookup after model finalization;
+- incremental/paged browser APIs;
+- backpressure instead of runaway allocation;
+- schedulers that process due work instead of scanning idle state;
+- observers/UI that cannot freeze protocol work.
+
+Representative benchmarks remain useful as regression tools, but the repository does not need to prove an arbitrary fixed signal count unless a future release explicitly makes a quantitative claim.
+
+If a README/release ever makes a quantitative performance claim, then that claim must be accompanied by reproducible environment/workload details.
 
 ## 2. Target architecture
 
@@ -102,27 +103,25 @@ bounded egress
 
 Browser/UI and diagnostics are observers. They never own protocol lifecycle or model truth.
 
-## 3. Million-point design contract
+## 3. High-cardinality design contract
 
-The architecture must have a credible path to at least **1,000,000 leaf data attributes/signals in one loaded model**.
+The runtime must be designed so larger engineering models remain responsive and do not freeze the protocol engine or browser.
 
-That does NOT imply one million simultaneous network clients.
-
-Before the project may claim this capability, the dedicated million-point benchmark profile in [docs/SCALABILITY.md](docs/SCALABILITY.md) must pass.
-
-Code added before that phase must not close the path to:
+No fixed point count is required by this contract. The design must preserve a clean path to:
 
 - stable numeric object/signal IDs;
-- string interning;
-- compact metadata;
-- arena/PMR allocation for model construction;
+- string interning when cardinality warrants it;
+- compact metadata/value separation;
+- arena/PMR allocation for large immutable model builds when useful;
 - O(1) average or O(log N) indexed reference lookup;
 - reverse indexes from signal/member IDs to interested DataSets/RCBs;
 - paged/cursor APIs;
 - batch mutation;
 - bounded queues and journals;
 - incremental serialization;
-- sharded/partitioned state if a single writer becomes the measured limit.
+- sharded/partitioned state only if profiling later justifies it.
+
+The important acceptance criterion is architectural: ordinary reads, updates, reporting, scheduling and UI navigation must scale with the work actually affected, not with the entire loaded model whenever avoidable.
 
 ## 4. Complexity rules
 
@@ -191,7 +190,7 @@ The report engine must preserve:
 - BRCB EntryID / PurgeBuf / overflow behavior;
 - bounded buffering and deterministic replay.
 
-At million scale, use reverse subscription indexes. Do not scan every RCB after each point mutation.
+At high cardinality, use reverse subscription indexes. Do not scan every RCB after each point mutation.
 
 ## 8. Control-plane and browser rules
 
@@ -204,7 +203,7 @@ Required direction:
 - incremental tree loading;
 - report/trace cursors or push streams;
 - bounded response sizes;
-- no default “download the whole million-point model as JSON”.
+- no default “download the whole high-cardinality model as JSON”.
 
 UI polish must not move protocol logic into JavaScript.
 
@@ -237,7 +236,7 @@ For performance-sensitive changes:
 - compare before/after with identical workloads;
 - reject benchmark tricks that remove real protocol work.
 
-Performance regression thresholds and million-point profiles are defined in [docs/SCALABILITY.md](docs/SCALABILITY.md).
+Performance regression thresholds and high-cardinality profiles are defined in [docs/SCALABILITY.md](docs/SCALABILITY.md).
 
 ## 11. Pull request minimum
 
@@ -250,7 +249,7 @@ A serious PR should answer:
 - What tests prove semantics?
 - What interoperability evidence exists?
 - Does it add allocations/copies/locks to a hot path?
-- Does it preserve the million-point architecture path?
+- Does it preserve the high-cardinality architecture path?
 - Does documentation/roadmap need updating?
 
 ## 12. Definition of Done
