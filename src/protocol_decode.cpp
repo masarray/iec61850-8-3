@@ -141,6 +141,142 @@ std::vector<FcdFcdaRef> decode_fcd_fcda_list(
     return refs;
 }
 
+std::int64_t decode_explicit_signed_integer(
+    const ber::Tlv& field,
+    std::uint32_t tag,
+    const ber::Limits& limits,
+    const char* label) {
+    using namespace ber;
+    const auto inner = unwrap_explicit(field, tag, limits, label);
+    require_tag(inner, TagClass::Universal, false, 2, label);
+    return decode_signed_content(inner.content);
+}
+
+Bytes decode_explicit_octets(
+    const ber::Tlv& field,
+    std::uint32_t tag,
+    const ber::Limits& limits,
+    const char* label) {
+    using namespace ber;
+    const auto inner = unwrap_explicit(field, tag, limits, label);
+    require_tag(inner, TagClass::Universal, false, 4, label);
+    return Bytes(inner.content.begin(), inner.content.end());
+}
+
+GetReportControlValuesResponse decode_get_rcb_response(
+    const std::vector<ber::Tlv>& fields,
+    bool buffered,
+    const ber::Limits& limits) {
+    using namespace ber;
+    GetReportControlValuesResponse rsp;
+    rsp.state.buffered = buffered;
+
+    for (const auto& field : fields) {
+        if (field.tag == Tag{TagClass::Context, true, 0}) {
+            rsp.state.report_id = decode_explicit_string(field, 0, limits, "rptID");
+        } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+            rsp.state.enabled = decode_explicit_bool(field, 1, limits, "rptEna");
+        } else if (field.tag == Tag{TagClass::Context, true, 2}) {
+            rsp.state.data_set = decode_explicit_string(field, 2, limits, "dataSet");
+        } else if (field.tag == Tag{TagClass::Context, true, 3}) {
+            rsp.state.conf_rev = static_cast<std::uint32_t>(
+                decode_explicit_integer(field, 3, limits, "confRev"));
+        } else if (field.tag == Tag{TagClass::Context, true, 4}) {
+            const auto seq = unwrap_explicit(field, 4, limits, "optFlds");
+            rsp.state.optional_fields =
+                decode_report_optional_fields(seq, limits, 4);
+        } else if (field.tag == Tag{TagClass::Context, true, 5}) {
+            rsp.state.buffer_time_ms = static_cast<std::uint32_t>(
+                decode_explicit_integer(field, 5, limits, "bufTm"));
+        } else if (field.tag == Tag{TagClass::Context, true, 6}) {
+            rsp.state.sequence_number = static_cast<std::uint16_t>(
+                decode_explicit_integer(field, 6, limits, "sqNum"));
+        } else if (field.tag == Tag{TagClass::Context, true, 7}) {
+            const auto seq = unwrap_explicit(field, 7, limits, "trgOp");
+            rsp.state.triggers = decode_trigger_options(seq, limits, 4);
+        } else if (field.tag == Tag{TagClass::Context, true, 8}) {
+            rsp.state.integrity_period_ms = static_cast<std::uint32_t>(
+                decode_explicit_integer(field, 8, limits, "intgPd"));
+        } else if (field.tag == Tag{TagClass::Context, true, 9}) {
+            rsp.state.gi = decode_explicit_bool(field, 9, limits, "gi");
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 10}) {
+            rsp.state.purge_buffer =
+                decode_explicit_bool(field, 10, limits, "purgeBuf");
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 11}) {
+            rsp.state.entry_id =
+                decode_explicit_octets(field, 11, limits, "entryID");
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 12}) {
+            const auto seq = unwrap_explicit(field, 12, limits, "timeOfEntry");
+            rsp.state.time_of_entry =
+                decode_timestamp_sequence(seq, limits, 4);
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 13}) {
+            rsp.state.reserved_time_seconds = static_cast<std::int16_t>(
+                decode_explicit_signed_integer(field, 13, limits, "rsvdTimeSec"));
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 14}) {
+            rsp.state.owner =
+                decode_explicit_octets(field, 14, limits, "owner");
+        } else if (!buffered && field.tag == Tag{TagClass::Context, true, 12}) {
+            rsp.state.reserved =
+                decode_explicit_bool(field, 12, limits, "resv");
+        } else if (!buffered && field.tag == Tag{TagClass::Context, true, 13}) {
+            rsp.state.owner =
+                decode_explicit_octets(field, 13, limits, "owner");
+        }
+    }
+    return rsp;
+}
+
+SetReportControlValuesRequest decode_set_rcb_request(
+    const std::vector<ber::Tlv>& fields,
+    bool buffered,
+    const ber::Limits& limits) {
+    using namespace ber;
+    SetReportControlValuesRequest req;
+    for (const auto& field : fields) {
+        if (field.tag == Tag{TagClass::Context, true, 0}) {
+            req.reference = decode_explicit_string(field, 0, limits, "rcbRef");
+        } else if (field.tag == Tag{TagClass::Context, true, 1}) {
+            req.buffer_time_ms = static_cast<std::uint32_t>(
+                decode_explicit_integer(field, 1, limits, "bufTm"));
+        } else if (field.tag == Tag{TagClass::Context, true, 2}) {
+            req.data_set = decode_explicit_string(field, 2, limits, "dataSet");
+        } else if (field.tag == Tag{TagClass::Context, true, 4}) {
+            req.gi = decode_explicit_bool(field, 4, limits, "gi");
+        } else if (field.tag == Tag{TagClass::Context, true, 5}) {
+            req.integrity_period_ms = static_cast<std::uint32_t>(
+                decode_explicit_integer(field, 5, limits, "intgPd"));
+        } else if (field.tag == Tag{TagClass::Context, true, 6}) {
+            const auto seq = unwrap_explicit(field, 6, limits, "optFlds");
+            req.optional_fields =
+                decode_report_optional_fields(seq, limits, 4);
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 7}) {
+            req.purge_buffer =
+                decode_explicit_bool(field, 7, limits, "purgeBuf");
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 8}) {
+            req.enabled = decode_explicit_bool(field, 8, limits, "rptEna");
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 9}) {
+            req.report_id = decode_explicit_string(field, 9, limits, "rptID");
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 10}) {
+            req.reserved_time_seconds = static_cast<std::int16_t>(
+                decode_explicit_signed_integer(field, 10, limits, "rsvdTimeSec"));
+        } else if (buffered && field.tag == Tag{TagClass::Context, true, 11}) {
+            const auto seq = unwrap_explicit(field, 11, limits, "trgOp");
+            req.triggers = decode_trigger_options(seq, limits, 4);
+        } else if (!buffered && field.tag == Tag{TagClass::Context, true, 7}) {
+            req.enabled = decode_explicit_bool(field, 7, limits, "rptEna");
+        } else if (!buffered && field.tag == Tag{TagClass::Context, true, 8}) {
+            req.report_id = decode_explicit_string(field, 8, limits, "rptID");
+        } else if (!buffered && field.tag == Tag{TagClass::Context, true, 9}) {
+            req.reserved = decode_explicit_bool(field, 9, limits, "resv");
+        } else if (!buffered && field.tag == Tag{TagClass::Context, true, 10}) {
+            const auto seq = unwrap_explicit(field, 10, limits, "trgOp");
+            req.triggers = decode_trigger_options(seq, limits, 4);
+        }
+    }
+    if (req.reference.empty()) throw Error("DMS BER: set RCB request missing reference");
+    return req;
+}
+
 } // namespace
 
 DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
@@ -375,6 +511,40 @@ DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
             return pdu;
         }
 
+        if (service.tag == Tag{TagClass::Context, true, 12} ||
+            service.tag == Tag{TagClass::Context, true, 14}) {
+            const bool buffered = service.tag.number == 12;
+            pdu.service = buffered
+                ? ServiceKind::GetBrcbValues
+                : ServiceKind::GetUrcbValues;
+            const auto fields = service_fields(
+                service, limits_, buffered ? "getBRCBValues" : "getURCBValues");
+            GetReportControlValuesRequest req;
+            for (const auto& field : fields) {
+                if (field.tag == Tag{TagClass::Context, true, 0}) {
+                    req.reference = decode_explicit_string(
+                        field, 0, limits_, buffered ? "brcbRef" : "urcbRef");
+                }
+            }
+            if (req.reference.empty()) {
+                throw Error("DMS BER: get RCB request missing reference");
+            }
+            pdu.payload = std::move(req);
+            return pdu;
+        }
+
+        if (service.tag == Tag{TagClass::Context, true, 13} ||
+            service.tag == Tag{TagClass::Context, true, 15}) {
+            const bool buffered = service.tag.number == 13;
+            pdu.service = buffered
+                ? ServiceKind::SetBrcbValues
+                : ServiceKind::SetUrcbValues;
+            const auto fields = service_fields(
+                service, limits_, buffered ? "setBRCBValues" : "setURCBValues");
+            pdu.payload = decode_set_rcb_request(fields, buffered, limits_);
+            return pdu;
+        }
+
         pdu.service = ServiceKind::Unknown;
         return pdu;
     }
@@ -526,6 +696,41 @@ DmsPdu ProtocolCodec::decode(std::span<const std::uint8_t> bytes) const {
                 }
             }
             pdu.payload = std::move(rsp);
+            return pdu;
+        }
+
+        if (service.tag == Tag{TagClass::Context, true, 12} ||
+            service.tag == Tag{TagClass::Context, true, 14}) {
+            const bool buffered = service.tag.number == 12;
+            pdu.service = buffered
+                ? ServiceKind::GetBrcbValues
+                : ServiceKind::GetUrcbValues;
+            const auto fields = service_fields(
+                service, limits_, buffered
+                    ? "getBRCBValuesResponse"
+                    : "getURCBValuesResponse");
+            pdu.payload = decode_get_rcb_response(fields, buffered, limits_);
+            return pdu;
+        }
+
+        if (service.tag == Tag{TagClass::Context, true, 13} ||
+            service.tag == Tag{TagClass::Context, true, 15}) {
+            const bool buffered = service.tag.number == 13;
+            pdu.service = buffered
+                ? ServiceKind::SetBrcbValues
+                : ServiceKind::SetUrcbValues;
+            const auto fields = service_fields(
+                service, limits_, buffered
+                    ? "setBRCBValuesResponse"
+                    : "setURCBValuesResponse");
+            SetReportControlValuesResponse rsp;
+            for (const auto& field : fields) {
+                if (field.tag == Tag{TagClass::Context, true, 0}) {
+                    rsp.ok =
+                        decode_explicit_enum(field, 0, limits_, "result") == 0;
+                }
+            }
+            pdu.payload = rsp;
             return pdu;
         }
 
