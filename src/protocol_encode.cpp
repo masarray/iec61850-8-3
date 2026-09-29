@@ -173,6 +173,69 @@ ber::Bytes encode_set_rcb_request_fields(
     return fields;
 }
 
+ber::Bytes encode_reason_for_inclusion(const ReasonForInclusion& reason) {
+    using namespace ber;
+    Bytes fields;
+    if (reason.data_change) append(fields, explicit_bool(0, true));
+    if (reason.quality_change) append(fields, explicit_bool(1, true));
+    if (reason.data_update) append(fields, explicit_bool(2, true));
+    if (reason.integrity) append(fields, explicit_bool(3, true));
+    if (reason.general_interrogation) append(fields, explicit_bool(4, true));
+    if (reason.application_trigger) append(fields, explicit_bool(5, true));
+    return sequence(fields);
+}
+
+ber::Bytes encode_report_entry(const ReportEntryData& entry) {
+    using namespace ber;
+    Bytes fields;
+    append(fields, explicit_string(0, entry.data_reference));
+    append(fields, context_explicit(
+        1, encode_data_attribute_values(entry.values)));
+    append(fields, context_explicit(
+        2, encode_reason_for_inclusion(entry.reason)));
+    return sequence(fields);
+}
+
+ber::Bytes encode_report(const ReportPdu& report) {
+    using namespace ber;
+    Bytes fields;
+    append(fields, explicit_string(0, report.report_id));
+    if (report.sequence_number) {
+        append(fields, explicit_integer(1, *report.sequence_number));
+    }
+    if (report.sub_sequence_number != 0) {
+        append(fields, explicit_integer(2, report.sub_sequence_number));
+    }
+    if (report.more_segments_follow) {
+        append(fields, explicit_bool(3, true));
+    }
+    if (report.data_set) {
+        append(fields, explicit_string(4, *report.data_set));
+    }
+    if (report.buffer_overflow) {
+        append(fields, explicit_bool(5, true));
+    }
+    if (report.conf_rev) {
+        append(fields, explicit_integer(6, *report.conf_rev));
+    }
+
+    Bytes entry_fields;
+    if (report.time_of_entry) {
+        append(entry_fields, context_explicit(
+            0, encode_timestamp_sequence(*report.time_of_entry)));
+    }
+    if (!report.entry_id.empty()) {
+        append(entry_fields, explicit_octets(1, report.entry_id));
+    }
+    Bytes entries;
+    for (const auto& item : report.entries) {
+        append(entries, encode_report_entry(item));
+    }
+    append(entry_fields, context_explicit(2, sequence(entries)));
+    append(fields, context_explicit(7, sequence(entry_fields)));
+    return sequence(fields);
+}
+
 
 } // namespace
 
@@ -226,6 +289,16 @@ ber::Bytes ProtocolCodec::encode(const DmsPdu& pdu) const {
         const auto lifecycle = context_explicit(service_tag, seq);
         const auto service = context_explicit(1, lifecycle);
         return context_explicit(0, service);
+    }
+
+    if (pdu.message_class == MessageClass::Unconfirmed &&
+        pdu.service == ServiceKind::Report) {
+        const auto& report = std::get<ReportPdu>(pdu.payload);
+        Bytes fields;
+        append(fields, explicit_string(0, pdu.associate_id));
+        append(fields, context_explicit(
+            1, context_explicit(0, encode_report(report))));
+        return context_explicit(3, sequence(fields));
     }
 
     if (pdu.message_class == MessageClass::Request) {
