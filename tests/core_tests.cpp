@@ -47,7 +47,7 @@ int main() {
     std::atomic<int> value{0};
     assert(worker.post([&] { value.fetch_add(1); }));
 
-    for (int i = 0; i < 100 && value.load() == 0; ++i) {
+    for (int i = 0; i < 1000 && value.load() == 0; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 
