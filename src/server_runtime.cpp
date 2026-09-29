@@ -42,6 +42,17 @@ void ServerRuntime::start() {
     if (!running_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return;
     try {
         if (!start_transport()) throw std::runtime_error("unable to start transport");
+        report_scheduler_ = std::jthread([this](std::stop_token token) {
+            using namespace std::chrono_literals;
+            while (!token.stop_requested()) {
+                std::this_thread::sleep_for(25ms);
+                if (token.stop_requested() || !running()) break;
+                service_worker_.post([this] {
+                    core_.poll_scheduled_reports();
+                    flush_unconfirmed();
+                });
+            }
+        });
         emit(RuntimeEvent::Kind::Started);
     } catch (...) {
         running_.store(false, std::memory_order_release);
@@ -51,6 +62,10 @@ void ServerRuntime::start() {
 
 void ServerRuntime::stop() noexcept {
     if (!running_.exchange(false, std::memory_order_acq_rel)) return;
+    if (report_scheduler_.joinable()) {
+        report_scheduler_.request_stop();
+        report_scheduler_.join();
+    }
     stop_transport();
     service_worker_.stop();
     emit(RuntimeEvent::Kind::Stopped);
@@ -143,6 +158,35 @@ bool ServerRuntime::set_float_batch(
         [this, promise, updates = std::move(updates)]() mutable {
             try {
                 const bool ok = core_.set_float_batch(updates);
+                if (ok) flush_unconfirmed();
+                promise->set_value(ok);
+            } catch (...) {
+                promise->set_exception(std::current_exception());
+            }
+        });
+    if (!accepted) return false;
+    if (future.wait_for(timeout) != std::future_status::ready) return false;
+    try {
+        return future.get();
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ServerRuntime::set_quality(
+    std::string_view reference,
+    Quality quality,
+    std::chrono::milliseconds timeout) {
+    if (!running()) return false;
+
+    auto promise = std::make_shared<std::promise<bool>>();
+    auto future = promise->get_future();
+    const std::string owned_reference(reference);
+    const bool accepted = service_worker_.post(
+        [this, promise, owned_reference, quality] {
+            try {
+                const bool ok =
+                    core_.set_quality(owned_reference, quality);
                 if (ok) flush_unconfirmed();
                 promise->set_value(ok);
             } catch (...) {
