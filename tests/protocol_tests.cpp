@@ -658,6 +658,75 @@ int main() {
             *overflow_report.sequence_number == 2);
     }
 
+    // Buffered history survives association release and can be replayed
+    // after a new association using the last acknowledged EntryID.
+    {
+        ServerCore reconnect{IedModel::make_ft20_reference_model()};
+        assert(reconnect.handle(codec.encode(assoc)).has_value());
+
+        DmsPdu cfg_pdu;
+        cfg_pdu.message_class = MessageClass::Request;
+        cfg_pdu.service = ServiceKind::SetBrcbValues;
+        cfg_pdu.associate_id = "id_cp1";
+        cfg_pdu.invoke_id = 1;
+
+        SetReportControlValuesRequest cfg;
+        cfg.reference = "LD0/LLN0.rcbMinMaxAvg";
+        cfg.enabled = true;
+        cfg.integrity_period_ms = 10;
+        cfg.triggers = TriggerOptions{.integrity = true};
+        cfg.optional_fields = ReportOptionalFields{
+            .sequence_number = true,
+            .timestamp = true,
+            .data_set = true,
+            .buffer_overflow = true,
+            .config_revision = true,
+            .entry_id = true,
+            .reason_code = true
+        };
+        cfg_pdu.payload = cfg;
+        assert(reconnect.handle(codec.encode(cfg_pdu)).has_value());
+
+        const auto base = std::chrono::steady_clock::now();
+        reconnect.poll_scheduled_reports(base);
+        reconnect.poll_scheduled_reports(
+            base + std::chrono::milliseconds{11});
+        auto before_release = reconnect.drain_unconfirmed();
+        assert(before_release.size() == 1);
+        const auto first_id =
+            std::get<ReportPdu>(before_release[0].payload).entry_id;
+
+        reconnect.poll_scheduled_reports(
+            base + std::chrono::milliseconds{21});
+        before_release = reconnect.drain_unconfirmed();
+        assert(before_release.size() == 1);
+        const auto second_id =
+            std::get<ReportPdu>(before_release[0].payload).entry_id;
+
+        DmsPdu rel;
+        rel.message_class = MessageClass::Association;
+        rel.service = ServiceKind::Release;
+        rel.associate_id = "id_cp1";
+        rel.invoke_id = 90;
+        assert(reconnect.handle(codec.encode(rel)).has_value());
+        assert(!reconnect.associated());
+        assert(reconnect.buffered_report_count(
+            "LD0/LLN0.rcbMinMaxAvg") == 2);
+
+        assert(reconnect.handle(codec.encode(assoc)).has_value());
+        cfg_pdu.invoke_id = 2;
+        cfg.enabled = true;
+        cfg.entry_id = first_id;
+        cfg_pdu.payload = cfg;
+        assert(reconnect.handle(codec.encode(cfg_pdu)).has_value());
+
+        auto replayed_after_reconnect = reconnect.drain_unconfirmed();
+        assert(replayed_after_reconnect.size() == 1);
+        const auto& replayed_report =
+            std::get<ReportPdu>(replayed_after_reconnect[0].payload);
+        assert(replayed_report.entry_id == second_id);
+    }
+
     // Canonical model exposes nested IEC attributes without dynamic dictionaries.
     {
         auto model = IedModel::make_ft20_reference_model();
