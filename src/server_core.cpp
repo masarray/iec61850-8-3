@@ -1,6 +1,8 @@
 #include "ar61850/dms/server_core.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <unordered_set>
 
 namespace ar61850::dms {
 namespace {
@@ -115,7 +117,10 @@ void apply_rcb_write(
 
     if (req.enabled) state.enabled = *req.enabled;
     if (req.report_id) state.report_id = *req.report_id;
-    if (req.data_set) state.data_set = *req.data_set;
+    if (req.data_set && *req.data_set != state.data_set) {
+        state.data_set = *req.data_set;
+        ++state.conf_rev;
+    }
     if (req.buffer_time_ms) state.buffer_time_ms = *req.buffer_time_ms;
     if (req.integrity_period_ms) {
         state.integrity_period_ms = *req.integrity_period_ms;
@@ -130,13 +135,6 @@ void apply_rcb_write(
 
     if (!was_enabled && state.enabled) {
         state.sequence_number = 0;
-    }
-
-    // There is no buffered journal yet. Treat PurgeBuf as a command and
-    // acknowledge it without leaving a sticky state behind.
-    if (req.purge_buffer && *req.purge_buffer) {
-        state.entry_id.assign(8, 0);
-        state.purge_buffer = false;
     }
 }
 
@@ -172,11 +170,40 @@ bool reference_affects_member(
     return false;
 }
 
+void merge_reason(
+    ReasonForInclusion& target,
+    const ReasonForInclusion& source) {
+    target.data_change = target.data_change || source.data_change;
+    target.quality_change = target.quality_change || source.quality_change;
+    target.data_update = target.data_update || source.data_update;
+    target.integrity = target.integrity || source.integrity;
+    target.general_interrogation =
+        target.general_interrogation || source.general_interrogation;
+    target.application_trigger =
+        target.application_trigger || source.application_trigger;
+}
+
+Bytes entry_id_from_counter(std::uint64_t value) {
+    Bytes id(8, 0);
+    for (std::size_t i = 0; i < id.size(); ++i) {
+        const auto shift = static_cast<unsigned>((id.size() - 1 - i) * 8);
+        id[i] = static_cast<std::uint8_t>((value >> shift) & 0xffU);
+    }
+    return id;
+}
+
+bool is_zero_entry_id(const Bytes& value) {
+    return value.size() == 8 &&
+        std::all_of(value.begin(), value.end(),
+            [](std::uint8_t byte) { return byte == 0; });
+}
+
 ReportPdu build_report(
     IedModel& model,
     ReportControlState& state,
-    const ReasonForInclusion& reason,
-    const std::vector<std::string>* changed_references) {
+    const ReasonForInclusion& default_reason,
+    const std::unordered_map<std::string, ReasonForInclusion>*
+        reasons_by_reference) {
     ReportPdu report;
     report.report_id = state.report_id;
     if (state.optional_fields.sequence_number) {
@@ -184,27 +211,27 @@ ReportPdu build_report(
     }
     if (state.optional_fields.data_set) report.data_set = state.data_set;
     if (state.optional_fields.config_revision) report.conf_rev = state.conf_rev;
-    if (state.optional_fields.timestamp) {
+    if (state.optional_fields.timestamp || state.buffered) {
         Timestamp now;
         now.value = std::chrono::system_clock::now();
         report.time_of_entry = now;
-    }
-    if (state.buffered && state.optional_fields.entry_id) {
-        report.entry_id = state.entry_id.empty() ? Bytes(8, 0) : state.entry_id;
     }
 
     const auto* data_set = model.find_data_set(state.data_set);
     if (!data_set) return report;
 
     for (const auto& member : data_set->members) {
-        if (changed_references) {
-            const bool affected = std::any_of(
-                changed_references->begin(),
-                changed_references->end(),
-                [&](const std::string& changed) {
-                    return reference_affects_member(
-                        changed, member.reference);
-                });
+        ReasonForInclusion entry_reason = default_reason;
+        if (reasons_by_reference) {
+            entry_reason = {};
+            bool affected = false;
+            for (const auto& [changed, reason] : *reasons_by_reference) {
+                if (!reference_affects_member(changed, member.reference)) {
+                    continue;
+                }
+                affected = true;
+                merge_reason(entry_reason, reason);
+            }
             if (!affected) continue;
         }
 
@@ -214,7 +241,7 @@ ReportPdu build_report(
         ReportEntryData entry;
         entry.data_reference = member.reference;
         entry.values.push_back(std::move(*value));
-        entry.reason = reason;
+        entry.reason = entry_reason;
         report.entries.push_back(std::move(entry));
     }
 
@@ -226,28 +253,78 @@ ReportPdu build_report(
 } // namespace
 
 ServerCore::ServerCore(IedModel model, ServerConfig config)
-    : model_(std::move(model)), config_(std::move(config)) {}
-
+    : model_(std::move(model)), config_(std::move(config)) {
+    if (config_.buffered_report_capacity == 0) {
+        config_.buffered_report_capacity = 1;
+    }
+}
 
 bool ServerCore::set_float(
     std::string_view reference,
     float value) noexcept {
+    const auto* attr = model_.find_data_attribute(reference);
+    if (!attr || attr->type != DataType::Float32) return false;
+    const auto* current = std::get_if<float>(&attr->value);
+    if (!current) return false;
+
+    const auto kind = (*current == value)
+        ? ChangeKind::DataUpdate
+        : ChangeKind::DataChange;
     if (!model_.set_float(reference, value)) return false;
-    enqueue_reports_for_changes({std::string(reference)});
+
+    enqueue_reports_for_changes(
+        {ChangeNotice{std::string(reference), kind}},
+        std::chrono::steady_clock::now());
     return true;
 }
 
 bool ServerCore::set_float_batch(
     const std::vector<std::pair<std::string, float>>& updates) noexcept {
-    if (!model_.set_float_batch(updates)) return false;
-    std::vector<std::string> changed;
-    changed.reserve(updates.size());
+    if (updates.empty()) return false;
+
+    std::vector<ChangeNotice> notices;
+    notices.reserve(updates.size());
     for (const auto& [reference, value] : updates) {
-        (void) value;
-        changed.push_back(reference);
+        const auto* attr = model_.find_data_attribute(reference);
+        if (!attr || attr->type != DataType::Float32) return false;
+        const auto* current = std::get_if<float>(&attr->value);
+        if (!current) return false;
+        notices.push_back(ChangeNotice{
+            reference,
+            *current == value ? ChangeKind::DataUpdate
+                              : ChangeKind::DataChange
+        });
     }
-    enqueue_reports_for_changes(changed);
+
+    if (!model_.set_float_batch(updates)) return false;
+    enqueue_reports_for_changes(
+        notices, std::chrono::steady_clock::now());
     return true;
+}
+
+bool ServerCore::set_quality(
+    std::string_view reference,
+    Quality quality) noexcept {
+    const auto* attr = model_.find_data_attribute(reference);
+    if (!attr || attr->type != DataType::Quality) return false;
+    const auto* current = std::get_if<Quality>(&attr->value);
+    if (!current) return false;
+
+    const auto kind = (*current == quality)
+        ? ChangeKind::DataUpdate
+        : ChangeKind::QualityChange;
+    if (!model_.set_quality(reference, quality)) return false;
+
+    enqueue_reports_for_changes(
+        {ChangeNotice{std::string(reference), kind}},
+        std::chrono::steady_clock::now());
+    return true;
+}
+
+std::size_t ServerCore::buffered_report_count(
+    std::string_view rcb_reference) const noexcept {
+    const auto it = buffered_journal_.find(std::string(rcb_reference));
+    return it == buffered_journal_.end() ? 0U : it->second.size();
 }
 
 std::vector<DmsPdu> ServerCore::drain_unconfirmed() {
@@ -256,43 +333,107 @@ std::vector<DmsPdu> ServerCore::drain_unconfirmed() {
     return pending;
 }
 
+void ServerCore::queue_report(
+    ReportControlState& state,
+    ReportPdu report) {
+    if (state.buffered) {
+        auto& next_id = next_buffer_entry_id_[state.reference.value];
+        report.entry_id = entry_id_from_counter(++next_id);
+
+        if (!report.time_of_entry) {
+            Timestamp now;
+            now.value = std::chrono::system_clock::now();
+            report.time_of_entry = now;
+        }
+
+        state.entry_id = report.entry_id;
+        state.time_of_entry = report.time_of_entry;
+
+        auto& journal = buffered_journal_[state.reference.value];
+        if (journal.size() >= config_.buffered_report_capacity) {
+            journal.pop_front();
+            if (state.optional_fields.buffer_overflow) {
+                report.buffer_overflow = true;
+            }
+        }
+        journal.push_back(report);
+    }
+
+    if (!associated_) return;
+
+    DmsPdu pdu;
+    pdu.message_class = MessageClass::Unconfirmed;
+    pdu.service = ServiceKind::Report;
+    pdu.associate_id = associate_id_;
+    pdu.payload = std::move(report);
+    pending_unconfirmed_.push_back(std::move(pdu));
+}
+
 void ServerCore::enqueue_reports_for_changes(
-    const std::vector<std::string>& changed_references) {
-    if (!associated_ || changed_references.empty()) return;
+    const std::vector<ChangeNotice>& changes,
+    std::chrono::steady_clock::time_point now) {
+    if (changes.empty()) return;
 
     for (auto& ld : model_.logical_devices()) {
         for (auto& ln : ld.logical_nodes) {
             for (auto& state : ln.report_controls) {
-                if (!state.enabled || !state.triggers.data_change) continue;
+                if (!state.enabled) continue;
+                if (!associated_ && !state.buffered) continue;
+
                 const auto* data_set = model_.find_data_set(state.data_set);
                 if (!data_set) continue;
 
-                const bool relevant = std::any_of(
-                    data_set->members.begin(),
-                    data_set->members.end(),
-                    [&](const DataSetMemberModel& member) {
-                        return std::any_of(
-                            changed_references.begin(),
-                            changed_references.end(),
-                            [&](const std::string& changed) {
-                                return reference_affects_member(
-                                    changed, member.reference);
-                            });
-                    });
-                if (!relevant) continue;
+                std::unordered_map<std::string, ReasonForInclusion>
+                    relevant;
+                for (const auto& change : changes) {
+                    const bool member_match = std::any_of(
+                        data_set->members.begin(),
+                        data_set->members.end(),
+                        [&](const DataSetMemberModel& member) {
+                            return reference_affects_member(
+                                change.reference, member.reference);
+                        });
+                    if (!member_match) continue;
 
-                ReasonForInclusion reason;
-                reason.data_change = true;
-                auto report = build_report(
-                    model_, state, reason, &changed_references);
-                if (report.entries.empty()) continue;
+                    ReasonForInclusion reason;
+                    switch (change.kind) {
+                    case ChangeKind::DataChange:
+                        if (!state.triggers.data_change) continue;
+                        reason.data_change = true;
+                        break;
+                    case ChangeKind::QualityChange:
+                        if (!state.triggers.quality_change) continue;
+                        reason.quality_change = true;
+                        break;
+                    case ChangeKind::DataUpdate:
+                        if (!state.triggers.data_update) continue;
+                        reason.data_update = true;
+                        break;
+                    }
+                    merge_reason(relevant[change.reference], reason);
+                }
 
-                DmsPdu pdu;
-                pdu.message_class = MessageClass::Unconfirmed;
-                pdu.service = ServiceKind::Report;
-                pdu.associate_id = associate_id_;
-                pdu.payload = std::move(report);
-                pending_unconfirmed_.push_back(std::move(pdu));
+                if (relevant.empty()) continue;
+
+                if (state.buffer_time_ms == 0) {
+                    auto report = build_report(
+                        model_, state, {}, &relevant);
+                    if (!report.entries.empty()) {
+                        queue_report(state, std::move(report));
+                    }
+                    continue;
+                }
+
+                auto& batch =
+                    pending_trigger_batches_[state.reference.value];
+                if (batch.reasons_by_reference.empty()) {
+                    batch.due = now + std::chrono::milliseconds{
+                        state.buffer_time_ms};
+                }
+                for (const auto& [reference, reason] : relevant) {
+                    merge_reason(
+                        batch.reasons_by_reference[reference], reason);
+                }
             }
         }
     }
@@ -307,14 +448,135 @@ void ServerCore::enqueue_gi_report(ReportControlState& state) {
     ReasonForInclusion reason;
     reason.general_interrogation = true;
     auto report = build_report(model_, state, reason, nullptr);
-    if (report.entries.empty()) return;
+    if (!report.entries.empty()) {
+        queue_report(state, std::move(report));
+    }
+}
 
-    DmsPdu pdu;
-    pdu.message_class = MessageClass::Unconfirmed;
-    pdu.service = ServiceKind::Report;
-    pdu.associate_id = associate_id_;
-    pdu.payload = std::move(report);
-    pending_unconfirmed_.push_back(std::move(pdu));
+void ServerCore::poll_scheduled_reports(
+    std::chrono::steady_clock::time_point now) {
+    for (auto it = pending_trigger_batches_.begin();
+         it != pending_trigger_batches_.end();) {
+        if (it->second.due > now) {
+            ++it;
+            continue;
+        }
+
+        auto* state = model_.find_report_control(it->first);
+        if (state && state->enabled &&
+            !it->second.reasons_by_reference.empty()) {
+            auto report = build_report(
+                model_, *state, {},
+                &it->second.reasons_by_reference);
+            if (!report.entries.empty()) {
+                queue_report(*state, std::move(report));
+            }
+        }
+        it = pending_trigger_batches_.erase(it);
+    }
+
+    for (auto& ld : model_.logical_devices()) {
+        for (auto& ln : ld.logical_nodes) {
+            for (auto& state : ln.report_controls) {
+                const auto& key = state.reference.value;
+                if (!state.enabled ||
+                    !state.triggers.integrity ||
+                    state.integrity_period_ms == 0) {
+                    integrity_deadlines_.erase(key);
+                    continue;
+                }
+                if (!associated_ && !state.buffered) {
+                    integrity_deadlines_.erase(key);
+                    continue;
+                }
+
+                const auto period =
+                    std::chrono::milliseconds{
+                        state.integrity_period_ms};
+                auto [deadline_it, inserted] =
+                    integrity_deadlines_.try_emplace(
+                        key, now + period);
+                if (inserted || now < deadline_it->second) {
+                    continue;
+                }
+
+                ReasonForInclusion reason;
+                reason.integrity = true;
+                auto report =
+                    build_report(model_, state, reason, nullptr);
+                if (!report.entries.empty()) {
+                    queue_report(state, std::move(report));
+                }
+
+                do {
+                    deadline_it->second += period;
+                } while (deadline_it->second <= now);
+            }
+        }
+    }
+}
+
+void ServerCore::reset_schedule(
+    const ReportControlState& state) {
+    pending_trigger_batches_.erase(state.reference.value);
+    integrity_deadlines_.erase(state.reference.value);
+}
+
+void ServerCore::purge_buffer(
+    std::string_view rcb_reference) {
+    buffered_journal_.erase(std::string(rcb_reference));
+    if (auto* state = model_.find_report_control(rcb_reference)) {
+        state->entry_id.assign(8, 0);
+        state->time_of_entry.reset();
+        state->purge_buffer = false;
+    }
+}
+
+bool ServerCore::replay_buffered_after(
+    const ReportControlState& state,
+    const Bytes& entry_id) {
+    if (!state.buffered || entry_id.size() != 8) return false;
+    const auto it = buffered_journal_.find(state.reference.value);
+    if (it == buffered_journal_.end() || it->second.empty()) {
+        return is_zero_entry_id(entry_id);
+    }
+
+    std::size_t start = 0;
+    if (!is_zero_entry_id(entry_id)) {
+        const auto found = std::find_if(
+            it->second.begin(), it->second.end(),
+            [&](const ReportPdu& report) {
+                return report.entry_id == entry_id;
+            });
+        if (found == it->second.end()) return false;
+        start = static_cast<std::size_t>(
+            std::distance(it->second.begin(), found)) + 1;
+    }
+
+    for (std::size_t i = start; i < it->second.size(); ++i) {
+        DmsPdu pdu;
+        pdu.message_class = MessageClass::Unconfirmed;
+        pdu.service = ServiceKind::Report;
+        pdu.associate_id = associate_id_;
+        pdu.payload = it->second[i];
+        pending_unconfirmed_.push_back(std::move(pdu));
+    }
+    return true;
+}
+
+void ServerCore::reset_client_rcb_state() {
+    pending_trigger_batches_.clear();
+    integrity_deadlines_.clear();
+    for (auto& ld : model_.logical_devices()) {
+        for (auto& ln : ld.logical_nodes) {
+            for (auto& state : ln.report_controls) {
+                state.enabled = false;
+                state.gi = false;
+                state.reserved = false;
+                state.owner.clear();
+            }
+        }
+    }
 }
 
 bool ServerCore::validate_association(const DmsPdu& request) const noexcept {
@@ -373,6 +635,7 @@ std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
         associated_ = false;
         associate_id_.clear();
         pending_unconfirmed_.clear();
+        reset_client_rcb_state();
         return rsp;
     }
 
@@ -595,6 +858,11 @@ std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
                 request, ServiceStatus::AccessNotAllowedInCurrentState);
         }
 
+        if (req.entry_id && !expect_buffered) {
+            return error_for(
+                request, ServiceStatus::ParameterValueInappropriate);
+        }
+
         if (req.data_set && !req.data_set->empty() &&
             !model_.find_data_set(*req.data_set)) {
             return error_for(
@@ -616,7 +884,34 @@ std::optional<DmsPdu> ServerCore::handle_pdu(const DmsPdu& request) {
             }
         }
 
+        const bool schedule_changed =
+            req.enabled.has_value() ||
+            req.integrity_period_ms.has_value() ||
+            req.triggers.has_value() ||
+            req.buffer_time_ms.has_value();
+
         apply_rcb_write(*state, req);
+
+        if (req.purge_buffer && *req.purge_buffer) {
+            if (!state->buffered) {
+                return error_for(
+                    request, ServiceStatus::ParameterValueInappropriate);
+            }
+            purge_buffer(state->reference.value);
+        }
+
+        if (schedule_changed) {
+            reset_schedule(*state);
+        }
+
+        if (req.entry_id) {
+            if (!state->buffered ||
+                !replay_buffered_after(*state, *req.entry_id)) {
+                return error_for(
+                    request, ServiceStatus::ParameterValueInconsistent);
+            }
+        }
+
         if (req.gi && *req.gi) {
             enqueue_gi_report(*state);
             state->gi = false;
