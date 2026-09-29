@@ -78,14 +78,14 @@ Exit: a user can launch one executable/service, open the browser, inspect the IE
 ## P4 — DataSets and event-driven reporting
 
 - [x] static DataSet discovery, directory and values
-- [ ] RCB state model (next)
-- [ ] Get/Set URCB and BRCB (next)
-- [ ] GI state/evidence
-- [ ] trigger options
-- [ ] unconfirmed report decode/encode
-- [ ] event-driven report stream to web UI
-- [ ] sequence/confRev continuity checks
-- [ ] no hidden cyclic read fallback
+- [x] canonical BRCB/URCB state model
+- [x] Get/Set URCB and BRCB BER + native service handling
+- [x] GI command semantics + full DataSet report evidence
+- [x] trigger options encode/decode and state validation
+- [x] unconfirmed Report BER encode/decode
+- [~] event-driven report delivery over DMS transport + trace/API visibility; dedicated browser report stream remains
+- [~] sequence increment + confRev carried in reports; continuity/fault tests remain
+- [x] no hidden cyclic read fallback
 
 Exit: a simulator value change reaches a subscribed client through a real report and updates the browser in real time.
 
