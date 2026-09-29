@@ -241,7 +241,7 @@ Before P5:
 - [ ] scheduler benchmark;
 - [ ] browser/API page benchmark.
 
-The 100k profile is an early architecture regression gate. P9 remains the broader scale/performance hardening phase; no fixed point-count certification is required.
+Representative generated large-model profiles are used as architecture regression gates. P9 remains the broader scale/performance hardening phase; no fixed point-count certification is required.
 
 ## P4S exit gate
 
