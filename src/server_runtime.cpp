@@ -116,7 +116,9 @@ bool ServerRuntime::set_float(
     const bool accepted = service_worker_.post(
         [this, promise, owned_reference, value] {
             try {
-                promise->set_value(core_.set_float(owned_reference, value));
+                const bool ok = core_.set_float(owned_reference, value);
+                if (ok) flush_unconfirmed();
+                promise->set_value(ok);
             } catch (...) {
                 promise->set_exception(std::current_exception());
             }
@@ -140,7 +142,9 @@ bool ServerRuntime::set_float_batch(
     const bool accepted = service_worker_.post(
         [this, promise, updates = std::move(updates)]() mutable {
             try {
-                promise->set_value(core_.set_float_batch(updates));
+                const bool ok = core_.set_float_batch(updates);
+                if (ok) flush_unconfirmed();
+                promise->set_value(ok);
             } catch (...) {
                 promise->set_exception(std::current_exception());
             }
@@ -172,6 +176,7 @@ void ServerRuntime::on_receive(Bytes payload) {
             } else {
                 emit(RuntimeEvent::Kind::TransportDisconnected, "transport rejected send");
             }
+            flush_unconfirmed();
         } catch (const std::exception& ex) {
             emit(RuntimeEvent::Kind::DecodeOrServiceError, ex.what());
         } catch (...) {
@@ -182,6 +187,22 @@ void ServerRuntime::on_receive(Bytes payload) {
     if (!accepted) {
         dropped_messages_.fetch_add(1, std::memory_order_relaxed);
         emit(RuntimeEvent::Kind::BackpressureDrop, "service worker queue is full");
+    }
+}
+
+void ServerRuntime::flush_unconfirmed() {
+    auto pending = core_.drain_unconfirmed();
+    for (auto& pdu : pending) {
+        auto wire = codec_.encode(pdu);
+        const auto byte_count = wire.size();
+        if (transport_->send(std::move(wire))) {
+            trace_wire(Direction::Tx, pdu, byte_count);
+        } else {
+            emit(
+                RuntimeEvent::Kind::TransportDisconnected,
+                "transport rejected unconfirmed report");
+            break;
+        }
     }
 }
 
