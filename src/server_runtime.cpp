@@ -45,6 +45,22 @@ void ServerRuntime::start() {
     if (!running_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return;
     try {
         if (!start_transport()) throw std::runtime_error("unable to start transport");
+
+        // Start() is a readiness contract, not merely a thread-launch request.
+        // Establish a service-worker barrier before the timer can enqueue any
+        // scheduled-report work. This removes startup ordering from transport
+        // callbacks and makes the headless runtime deterministic under CI load.
+        auto ready_promise = std::make_shared<std::promise<void>>();
+        auto ready_future = ready_promise->get_future();
+        if (!service_worker_.post([ready_promise] {
+                ready_promise->set_value();
+            }) ||
+            ready_future.wait_for(std::chrono::seconds{3}) !=
+                std::future_status::ready) {
+            throw std::runtime_error(
+                "service worker did not become ready during runtime start");
+        }
+
         report_scheduler_ = std::jthread([this](std::stop_token token) {
             using namespace std::chrono_literals;
             while (!token.stop_requested()) {
