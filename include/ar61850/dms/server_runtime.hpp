@@ -81,6 +81,7 @@ private:
     void on_receive(Bytes payload);
     void emit(RuntimeEvent::Kind kind, std::string detail = {});
     void trace_wire(Direction direction, const DmsPdu& pdu, std::size_t bytes);
+    void flush_unconfirmed();
 
     ServerCore core_;
     ProtocolCodec codec_;
