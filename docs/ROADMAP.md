@@ -141,3 +141,69 @@ Netbeheer remains a test oracle only.
 - [ ] schema/version negotiation strategy
 - [ ] security profile research
 - [ ] conformance-test mapping when stable public procedures exist
+
+
+## P9 — Million-point architecture and performance certification
+
+Detailed plan: [SCALABILITY.md](SCALABILITY.md)
+
+- [ ] stable numeric IDs for high-cardinality entities
+- [ ] string interning / compact reference storage
+- [ ] immutable metadata separated from mutable value storage
+- [ ] reference -> ID indexes
+- [ ] reverse signal -> interested RCB index
+- [ ] paged/lazy model and signal APIs
+- [ ] scalable high-cardinality timer scheduler
+- [ ] reusable/pool-backed hot-path buffers where measurement justifies them
+- [ ] deterministic large-model generator
+- [ ] machine-readable benchmark runner
+- [ ] 1,000,000-leaf-signal benchmark profile
+- [ ] DataSet/RCB/session stress profiles
+- [ ] memory/latency/throughput report
+- [ ] 24-hour soak and regression budgets
+
+Exit: the million-point L profile passes published acceptance gates. Only then may releases claim validated million-point capability.
+
+## P10 — Security and operational hardening
+
+- [ ] threat model
+- [ ] management-plane auth strategy for non-lab deployment
+- [ ] TLS/security profile mapping when applicable
+- [ ] admission control/rate limiting
+- [ ] fuzz campaigns and sanitizer suites
+- [ ] dependency/SBOM workflow
+- [ ] secure lab-vs-production configuration boundary
+
+Exit: deployment assumptions, trust boundaries and supported secure modes are explicit and tested.
+
+## P11 — Packaging and release engineering
+
+- [ ] versioned Windows/Linux packages
+- [ ] service/daemon operation
+- [ ] structured logs and metrics
+- [ ] clean shutdown/restart behavior
+- [ ] upgrade/config compatibility policy
+- [ ] artifact provenance and SBOM
+- [ ] user-facing release documentation
+
+Exit: a fresh engineering workstation can install, run and diagnose the engine without source checkout.
+
+## P12 — Conformance readiness / stable 1.0
+
+- [ ] standard-clause/service support matrix
+- [ ] conformance statement/profile
+- [ ] positive/negative conformance-test mapping
+- [ ] recognized test-lab preparation if applicable
+- [ ] unsupported optional-service declaration
+- [ ] API compatibility and deprecation policy
+- [ ] final interoperability report
+- [ ] final performance/scalability report
+- [ ] final security report
+
+Exit: supported production profile is explicit, reproducible, interoperable and passes all mandatory project gates.
+
+## Completion authority
+
+[IMPLEMENTATION_PHASES.md](IMPLEMENTATION_PHASES.md) is the detailed phase-completion contract.
+
+[../AGENTS.md](../AGENTS.md) and [ENGINEERING_STANDARD.md](ENGINEERING_STANDARD.md) are mandatory for every phase: no phase may introduce known naive hot paths, unbounded resource growth or architecture that knowingly requires rollback later.
