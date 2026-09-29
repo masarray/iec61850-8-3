@@ -1,72 +1,80 @@
-# Scalability and Performance Architecture
+# Scalability and Responsiveness Architecture
 
 ## 1. Scope
 
-The long-term scalability target is a **million-point class IEC 61850 model**.
+This project treats phrases such as “millions of data points” as shorthand for a **high-cardinality engineering workload**. It is not a mandatory fixed-number certification target.
 
-For this project, “million-point” means the runtime can load, index, browse, read, update, and selectively report from at least **1,000,000 leaf data attributes/signals** while staying bounded and responsive.
+The engineering requirement is that larger models remain responsive and predictable:
 
-It does not mean one million concurrent WebSocket sessions.
+- the protocol runtime must not freeze because the browser is slow;
+- ordinary reads/updates must not repeatedly scan the whole model;
+- report fanout must touch interested subscriptions rather than every RCB;
+- timers must process due work rather than repeatedly scanning all timers;
+- queues, journals, traces and observer feeds must remain bounded;
+- browser/model APIs must become incremental as data volume grows;
+- overload must create deterministic backpressure, rejection or eviction instead of runaway memory.
 
-All numbers below are **acceptance targets**, not current performance claims.
+Representative generated workloads are used for regression and architecture validation. Their exact size may change as the implementation evolves.
 
 ## 2. Workload dimensions
 
-Performance must be measured across separate axes.
+Scale is multi-dimensional and must not be reduced to one point count.
 
-### Model scale
+### Model cardinality
 
-Profiles:
+Measure a configurable set of generated models:
 
-- S: 10,000 leaf signals
-- M: 100,000 leaf signals
-- L: 1,000,000 leaf signals
-- XL research: 5,000,000 leaf signals
+- small correctness profile;
+- medium engineering profile;
+- large stress/regression profile;
+- optional extreme research profile.
 
-### DataSet/RCB scale
+The actual point counts are benchmark configuration, not a product promise.
 
-Representative large profile:
+### DataSet/RCB cardinality
 
-- 10,000 DataSets;
-- 100,000 total DataSet memberships or more;
-- 10,000 RCBs;
-- sparse subscription fanout for ordinary points;
-- intentionally dense worst-case profile tested separately.
+Exercise:
 
-### Session scale
+- many DataSets with sparse membership;
+- large DataSets;
+- many RCBs;
+- sparse signal-to-RCB fanout;
+- deliberately dense worst-case fanout;
+- mixed BRCB/URCB states.
 
-Do not conflate with model scale.
+### Session cardinality
 
-Initial performance profiles:
+Session scale is independent from model size.
 
-- 1 client;
-- 32 concurrent clients;
-- 128 concurrent clients;
-- higher counts only after connection/session memory is measured.
+Exercise:
 
-### Update scale
+- one client;
+- multiple concurrent clients;
+- reconnect bursts;
+- slow clients;
+- backpressured clients.
 
-Measure:
+### Update patterns
 
-- isolated writes;
-- batches of 100 / 1,000 / 10,000 points;
-- repeated same-value updates (dupd);
-- quality changes;
-- bursty dchg;
-- integrity report storms;
-- GI across small and large DataSets.
+Exercise:
 
-## 3. Required architectural evolution
+- isolated dchg;
+- same-value dupd;
+- qchg;
+- batched mutations;
+- bursty updates;
+- BufTm coalescing;
+- GI;
+- periodic integrity;
+- BRCB replay.
 
-The current string-rich tree is appropriate for correctness work but is not the final million-point representation.
+## 3. Mandatory architecture
 
-Before million-scale certification, implement:
+### 3.1 Stable IDs after model finalization
 
-### 3.1 Stable IDs
+External references are convenient at boundaries. Internal hot paths should resolve them to stable IDs.
 
-Resolve external object references to compact IDs.
-
-Example:
+Example direction:
 
 ```cpp
 using SignalId = std::uint32_t;
@@ -74,241 +82,196 @@ using DataSetId = std::uint32_t;
 using RcbId = std::uint32_t;
 ```
 
-Hot paths should operate on IDs.
+After resolution, updates/report fanout should operate on IDs rather than repeatedly splitting reference strings.
 
-### 3.2 String interning
+### 3.2 Indexed lookup
 
-Store repeated names/reference fragments once.
-
-A one-million-point model must not duplicate full path strings in every relationship table.
-
-### 3.3 Split metadata and values
-
-Mostly immutable topology/metadata should be separate from mutable signal values.
-
-This improves:
-
-- cache locality;
-- snapshot strategy;
-- batch updates;
-- memory accounting.
-
-### 3.4 Contiguous storage
-
-Favor compact vectors/tables for high-cardinality entities.
-
-Pointer-heavy object graphs are harder to traverse efficiently and increase allocator overhead.
-
-### 3.5 Build-time indexes
-
-At model-finalization time, build:
+Build indexes during model finalization:
 
 - reference -> object/signal ID;
+- parent -> child ranges;
 - DataSet -> member IDs;
-- signal ID -> interested RCB IDs;
 - RCB -> DataSet ID;
-- logical hierarchy child ranges;
-- optional search index for engineering UI.
+- signal/member ID -> interested RCB IDs;
+- optional engineering-search index.
 
-### 3.6 Incremental browser API
+Target complexity:
 
-A million-point model must never require one giant `/api/model` response.
-
-Required APIs:
-
-- tree children by parent ID;
-- paged signal query;
-- server-side search;
-- DataSet members page;
-- RCB page;
-- report cursor/push channel.
-
-## 4. Complexity targets
-
-| Operation | Target |
+| Operation | Architectural target |
 |---|---|
+| resolved point read | O(1) |
+| resolved point update | O(1) before fanout |
 | reference lookup | O(1) average or O(log N) |
-| point read by ID | O(1) |
-| point update by ID | O(1) before subscription fanout |
-| affected RCB lookup | O(number of interested RCBs) |
+| affected RCB lookup | O(interested subscriptions) |
 | DataSet read | O(member count) |
-| trace insert | O(1) |
 | BRCB append/evict | amortized O(1) |
-| report cursor advance | O(page size) |
-| tree child query | O(number of children returned) |
+| trace/report ring append | O(1) |
+| page retrieval | O(page size) |
 
-A global model/RCB scan in the per-point update path fails the million-scale design gate.
+### 3.3 Metadata/value separation
 
-## 5. Allocation targets
+Topology is mostly immutable after finalization.
 
-Once the high-scale storage layer is introduced:
+Separate:
 
-- steady-state point update: zero heap allocations on the common path where practical;
-- report aggregation: reuse bounded buckets/buffers;
-- encode path: reusable/reservable buffers;
-- trace/report observation: fixed-capacity rings;
-- model construction: arena/PMR strategy evaluated and benchmarked.
+- names/types/hierarchy/configuration metadata;
+- mutable signal values/quality/timestamp;
+- DataSet memberships;
+- RCB runtime state;
+- session state;
+- observer buffers.
 
-## 6. Benchmark acceptance gates
+This makes updates cheap and prevents large metadata copies.
 
-Benchmarks must publish environment and raw summary data.
+### 3.4 Compact storage
 
-### Gate A — model build
+Prefer contiguous tables for high-cardinality runtime entities.
 
-For L profile (1,000,000 leaf signals):
+Evaluate, when useful:
 
-- model builds successfully in a bounded process;
-- no pathological super-linear growth;
-- reference index build completes;
-- memory high-water mark recorded;
-- no stack overflow from hierarchy construction/traversal.
+- string interning;
+- compact reference fragments;
+- arenas / `std::pmr` for model construction;
+- reusable encode buffers;
+- pooled report aggregation buckets.
 
-No hard time/memory number is claimed until the optimized storage implementation lands. The first P9 benchmark run establishes the baseline and then the project locks regression budgets.
+Do not introduce pooling merely for fashion; keep it where profiling and allocation behavior justify it.
 
-### Gate B — lookup
+## 4. Report-engine scale model
 
-On the L model:
-
-- random lookup latency distribution is recorded for at least 1,000,000 operations;
-- p99 must remain stable as N grows from M to L, consistent with indexed complexity;
-- no repeated path tokenization/tree walk in the resolved-ID hot path.
-
-### Gate C — mutation throughput
-
-Measure single-point and batched updates:
-
-- dchg;
-- dupd;
-- qchg.
-
-Publish:
-
-- updates/s;
-- p50/p95/p99 enqueue-to-apply latency;
-- allocations/update;
-- CPU utilization;
-- queue high-water mark.
-
-### Gate D — report fanout
-
-Measure:
-
-- sparse subscriptions;
-- dense subscriptions;
-- BufTm coalescing;
-- integrity timer load;
-- GI.
-
-The sparse profile must scale with interested subscriptions, not all RCBs.
-
-### Gate E — control plane
-
-With the L model:
-
-- first browser page does not serialize the entire model;
-- tree expansion returns bounded pages;
-- search is server-side;
-- report/trace viewers use cursors or push streaming;
-- slow/paused browsers do not increase engine memory without bound.
-
-### Gate F — soak
-
-Minimum production-readiness soak profile:
-
-- 24 hours;
-- repeated connect/disconnect;
-- mixed reads, reports, scenarios;
-- bounded memory after warm-up;
-- no monotonic queue/journal growth;
-- no lost scheduler liveness;
-- no deadlock.
-
-Longer 72-hour soak becomes a release-candidate gate later.
-
-## 7. Regression budgets
-
-After P9 baseline is established, CI/performance infrastructure should maintain separate noise-aware thresholds.
-
-Recommended policy:
-
-- correctness benchmark failure: always fail;
-- >10% repeatable throughput regression: investigate/block unless justified;
-- >10% repeatable p99 latency regression: investigate/block unless justified;
-- >10% repeatable memory increase on the same profile: investigate/block unless justified.
-
-Do not apply noisy microsecond thresholds blindly on shared hosted runners. Stable performance gates may run on controlled hardware.
-
-## 8. Report engine scale plan
-
-Current correctness implementation may iterate structures that are small in the sample model.
-
-Million-scale target:
+Desired path:
 
 ```text
 SignalId update
-   |
-reverse index
-   |
-small set of RcbId
-   |
-per-RCB bounded BufTm accumulator
-   |
-due queue/timing wheel
-   |
-report builder using DataSet member IDs
-   |
+    |
+reverse subscription index
+    |
+affected RcbIds only
+    |
+bounded BufTm accumulators
+    |
+due-time scheduler
+    |
+DataSet member IDs
+    |
+report builder / encoder
+    |
 bounded egress / BRCB journal
 ```
 
-### Integrity scheduler
+This replaces correctness-first patterns such as scanning every RCB after each point mutation.
 
-If RCB count becomes large, use a timing wheel or efficient timer heap rather than checking every RCB at a fixed polling tick.
+## 5. Timer/scheduler strategy
 
-The scheduler may wake periodically, but it must not poll IEC signal values to implement reporting.
+Do not create one thread per RCB or one timer object that requires global polling.
 
-## 9. Memory-budget methodology
+Preferred direction:
 
-Do not guess memory support from `sizeof` alone.
+- one scheduler thread or a small bounded set;
+- min-heap for moderate due-time cardinality;
+- timing wheel only if later profiling justifies it;
+- versioned/stale timer entries rather than expensive in-place heap mutation where useful;
+- monotonic clock for scheduling;
+- batch processing for simultaneously due work.
 
-Measure:
+The scheduler may wake periodically, but it must not cyclically read IEC values to simulate event-driven reporting.
 
-- allocator overhead;
-- string/index storage;
-- model metadata;
-- mutable values;
-- memberships;
-- RCB state;
-- session state;
-- journals;
-- encode/decode buffers;
-- traces/observer buffers.
+## 6. Buffer and memory policy
 
-Publish bytes per leaf signal for the standard benchmark model.
+Every high-cardinality resource has both a local and, where necessary, global budget.
 
-The optimization objective is compact enough that one million signals fit comfortably on an engineering workstation with operating margin, not merely “does not crash”.
+Examples:
 
-## 10. Benchmark implementation plan
+- ingress/service queues;
+- outstanding request tables;
+- trace ring;
+- report observation ring;
+- per-RCB BRCB journal;
+- global BRCB journal budget;
+- BufTm pending groups;
+- HTTP response/page size;
+- WebSocket message size;
+- cached search/index data.
 
-P9 introduces a dedicated benchmark executable/profile generator, not ad-hoc timing inside unit tests.
+When a limit is reached, behavior must be explicit:
 
-It must support deterministic seeds and emit machine-readable results.
+- reject;
+- backpressure;
+- overwrite oldest observer data;
+- evict according to BRCB semantics;
+- return pagination/cursor continuation;
+- disconnect abusive peers when required.
 
-Planned commands conceptually:
+## 7. Browser/control-plane responsiveness
 
-```text
-benchmark model-build --signals 1000000
-benchmark lookup --signals 1000000 --ops 1000000
-benchmark mutate --signals 1000000 --updates 5000000 --batch 1000
-benchmark report --signals 1000000 --rcbs 10000 --fanout sparse
-benchmark soak --profile production --hours 24
-```
+The Workbench must not request or render the whole model by default when the model is large.
 
-The exact CLI may evolve, but reproducibility is mandatory.
+Required direction:
 
-## 11. What may be claimed today
+- root/children lazy tree APIs;
+- server-side signal search;
+- page/cursor parameters;
+- DataSet member paging;
+- RCB paging;
+- report/trace cursor reads or push stream;
+- bounded JSON response size;
+- cancellation/debounce for search;
+- virtualized tables when row counts become large.
 
-Current milestones prove protocol/runtime behavior on deterministic lab models.
+A slow browser must consume its own bounded observer path and must never stall DMS service processing.
 
-The repository must NOT yet state “validated for one million points” until P9 measurements are green.
+## 8. Allocation and copy policy
 
-The important requirement today is that P0–P8 code follows [../AGENTS.md](../AGENTS.md) and does not knowingly lock the engine into algorithms or ownership patterns that require a complete rewrite to reach P9.
+Common-path goals:
+
+- resolve references once and pass IDs internally;
+- batch updates;
+- reuse report aggregation structures;
+- reserve/reuse encoder buffers where useful;
+- move wire buffers into transport;
+- avoid copying the full model for one HTTP request;
+- avoid storing full reference strings redundantly in every relationship table.
+
+Zero allocation on every hot path is not an ideological requirement. Avoidable allocation and copying are.
+
+## 9. Representative regression profiles
+
+Performance tests are engineering tools, not fixed product certifications.
+
+Useful deterministic profiles should cover:
+
+- model build/index finalization;
+- random reference lookup;
+- ID-based read/update;
+- sparse report fanout;
+- dense report fanout;
+- BufTm burst coalescing;
+- integrity scheduler load;
+- DataSet reads;
+- BRCB append/replay;
+- browser page/search;
+- connect/disconnect churn.
+
+Each benchmark should emit machine-readable results so regressions can be compared over time.
+
+## 10. What blocks a merge
+
+A change should be redesigned before merge if it introduces, without a documented bounded reason:
+
+- global model scans in a per-point hot path;
+- all-RCB scans for each update;
+- all-RCB polling for ordinary scheduler ticks;
+- unbounded queues/journals/retries;
+- whole-model copies for ordinary browser navigation;
+- one thread per client/RCB/timer;
+- hidden polling as reporting;
+- UI/logging/disk waits on the protocol service path;
+- repeated parsing of a reference that has already been resolved.
+
+## 11. What may be claimed
+
+Today, the repository may state that its architecture is **designed for high-cardinality responsive operation** and that it uses bounded/indexed/event-driven patterns as those layers are completed.
+
+It should not publish a specific point-count performance claim unless a release explicitly chooses to measure and document that number.
+
+The goal is professional architecture from the beginning, not marketing around an arbitrary count.
