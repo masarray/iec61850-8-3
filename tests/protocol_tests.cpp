@@ -1,0 +1,799 @@
+#include "ar61850/dms/ber.hpp"
+#include "ar61850/dms/protocol.hpp"
+#include "ar61850/dms/server_core.hpp"
+
+#include <cassert>
+#include <chrono>
+#include <cstdint>
+#include <iomanip>
+#include <iostream>
+#include <string>
+
+using namespace ar61850::dms;
+
+static ber::Bytes hex(std::string_view text) {
+    ber::Bytes out;
+    unsigned value = 0;
+    int nibble = 0;
+    for (const char c : text) {
+        if (c == ' ' || c == '\n' || c == '\t') continue;
+        unsigned x;
+        if (c >= '0' && c <= '9') x = c - '0';
+        else if (c >= 'a' && c <= 'f') x = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') x = c - 'A' + 10;
+        else assert(false);
+        value = (value << 4) | x;
+        if (++nibble == 2) {
+            out.push_back(static_cast<std::uint8_t>(value));
+            value = 0;
+            nibble = 0;
+        }
+    }
+    assert(nibble == 0);
+    return out;
+}
+
+static void assert_equal(const ber::Bytes& a, const ber::Bytes& b, const char* what) {
+    if (a == b) return;
+    std::cerr << what << " mismatch\nactual:   ";
+    for (auto x : a) std::cerr << std::hex << std::setw(2) << std::setfill('0') << unsigned(x);
+    std::cerr << "\nexpected: ";
+    for (auto x : b) std::cerr << std::hex << std::setw(2) << std::setfill('0') << unsigned(x);
+    std::cerr << "\n";
+    std::abort();
+}
+
+int main() {
+    ProtocolCodec codec;
+
+    // Captured from the pinned Netbeheer FT20 reference behavior.
+    const auto associate_rsp = hex(
+        "a01ca11aa1183016a005020300fde8a1080c0669645f637031a20302010a");
+    auto p = codec.decode(associate_rsp);
+    assert(p.message_class == MessageClass::Association);
+    assert(p.service == ServiceKind::Associate);
+    const auto& ar = std::get<AssociateResponse>(p.payload);
+    assert(ar.max_message_size == 65000);
+    assert(ar.associate_id == "id_cp1");
+    assert(ar.max_outstanding_calls && *ar.max_outstanding_calls == 10);
+    assert_equal(codec.encode(p), associate_rsp, "associateResponse");
+
+    const auto server_dir_rsp = hex(
+        "a21e301ca0080c0669645f637031810100a20dbd0b3009a00730050c034c4430");
+    p = codec.decode(server_dir_rsp);
+    assert(p.service == ServiceKind::GetServerDirectory);
+    assert(p.invoke_id && *p.invoke_id == 0);
+    const auto& sd = std::get<GetServerDirectoryResponse>(p.payload);
+    assert(sd.logical_devices.size() == 1 && sd.logical_devices[0] == "LD0");
+    assert_equal(codec.encode(p), server_dir_rsp, "getServerDirectory response");
+
+    const auto ld_dir_rsp = hex(
+        "a23b3039a0080c0669645f637031810101a22aa1283026a02430220c044c4c4e30"
+        "0c054c504844310c0544574d58310c054447454e310c054d4d585531");
+    p = codec.decode(ld_dir_rsp);
+    assert(p.service == ServiceKind::GetLogicalDeviceDirectory);
+    const auto& ld = std::get<GetLogicalDeviceDirectoryResponse>(p.payload);
+    assert(ld.logical_nodes.size() == 5);
+    assert(ld.logical_nodes.front() == "LLN0");
+    assert(ld.logical_nodes.back() == "MMXU1");
+    assert_equal(codec.encode(p), ld_dir_rsp, "getLogicalDeviceDirectory response");
+
+    const auto ln_dir_rsp = hex(
+        "a2333031a0080c0669645f637031810102a222a220301ea01c301a0c034d6f640c"
+        "064e616d506c740c034265680c064865616c7468");
+    p = codec.decode(ln_dir_rsp);
+    assert(p.service == ServiceKind::GetLogicalNodeDirectory);
+    const auto& ln = std::get<GetLogicalNodeDirectoryResponse>(p.payload);
+    assert(ln.instance_names.size() == 4);
+    assert(ln.instance_names[0] == "Mod");
+    assert(ln.instance_names[3] == "Health");
+    assert_equal(codec.encode(p), ln_dir_rsp, "getLogicalNodeDirectory response");
+
+    DmsPdu req;
+    req.message_class = MessageClass::Request;
+    req.service = ServiceKind::GetServerDirectory;
+    req.associate_id = "id_cp1";
+    req.invoke_id = 7;
+    req.payload = GetServerDirectoryRequest{};
+    const auto encoded_req = codec.encode(req);
+    const auto decoded_req = codec.decode(encoded_req);
+    assert(decoded_req.service == ServiceKind::GetServerDirectory);
+    assert(decoded_req.invoke_id && *decoded_req.invoke_id == 7);
+
+    // Native standalone server core: Netbeheer isn't loaded or spawned.
+    ServerCore server{IedModel::make_ft20_reference_model()};
+    DmsPdu assoc;
+    assoc.message_class = MessageClass::Association;
+    assoc.service = ServiceKind::Associate;
+    assoc.payload = AssociateRequest{
+        .called_ap = std::string("cp1"),
+        .max_message_size = 65000
+    };
+    auto wire_rsp = server.handle(codec.encode(assoc));
+    assert(wire_rsp.has_value());
+    assert_equal(*wire_rsp, associate_rsp, "native server associate response");
+    assert(server.associated());
+    assert(server.associate_id() == "id_cp1");
+
+    DmsPdu native_req;
+    native_req.message_class = MessageClass::Request;
+    native_req.service = ServiceKind::GetServerDirectory;
+    native_req.associate_id = "id_cp1";
+    native_req.invoke_id = 0;
+    native_req.payload = GetServerDirectoryRequest{};
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    assert_equal(*wire_rsp, server_dir_rsp, "native server GetServerDirectory");
+
+    native_req.service = ServiceKind::GetLogicalDeviceDirectory;
+    native_req.invoke_id = 1;
+    native_req.payload = GetLogicalDeviceDirectoryRequest{.logical_device = "LD0"};
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    assert_equal(*wire_rsp, ld_dir_rsp, "native server GetLogicalDeviceDirectory");
+
+    native_req.service = ServiceKind::GetLogicalNodeDirectory;
+    native_req.invoke_id = 2;
+    native_req.payload = GetLogicalNodeDirectoryRequest{
+        .logical_node_reference = "LD0/LLN0",
+        .acsi_class = AcsiClass::DataObject
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    assert_equal(*wire_rsp, ln_dir_rsp, "native server GetLogicalNodeDirectory");
+
+    // P2 data-definition and live-value services are native and typed.
+    native_req.service = ServiceKind::GetDataDefinition;
+    native_req.invoke_id = 3;
+    native_req.payload = GetDataDefinitionRequest{
+        .data_reference = "LD0/MMXU1.TotW"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto data_definition_pdu = codec.decode(*wire_rsp);
+    assert(data_definition_pdu.service == ServiceKind::GetDataDefinition);
+    const auto& data_definition =
+        std::get<GetDataDefinitionResponse>(data_definition_pdu.payload);
+    assert(data_definition.cdc && *data_definition.cdc == "MV");
+    assert(data_definition.data_attributes.size() == 4);
+    assert(data_definition.data_attributes[0].reference == "mag");
+    assert(data_definition.data_attributes[0].type == DataType::Structure);
+    assert(data_definition.data_attributes[0].components.size() == 1);
+    assert(data_definition.data_attributes[0].components[0].reference == "f");
+    assert(data_definition.data_attributes[0].components[0].type == DataType::Float32);
+
+    native_req.service = ServiceKind::GetDataValues;
+    native_req.invoke_id = 4;
+    native_req.payload = GetDataValuesRequest{
+        .ref = FcdFcdaRef{
+            .reference = "LD0/MMXU1.TotW",
+            .fc = FunctionalConstraint::MX
+        },
+        .include_element_name = true
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto values_pdu = codec.decode(*wire_rsp);
+    assert(values_pdu.service == ServiceKind::GetDataValues);
+    const auto& values = std::get<GetDataValuesResponse>(values_pdu.payload);
+    assert(values.data_attribute_values.size() == 3);
+    assert(values.data_attribute_values[0].name == "mag");
+    assert(values.data_attribute_values[0].type == DataType::Structure);
+    assert(values.data_attribute_values[0].children.size() == 1);
+    assert(values.data_attribute_values[0].children[0].type == DataType::Float32);
+    assert(std::get<float>(values.data_attribute_values[0].children[0].scalar) == 10.0F);
+    assert(values.data_attribute_values[1].name == "q");
+    assert(values.data_attribute_values[1].type == DataType::Quality);
+    assert(values.data_attribute_values[2].name == "t");
+    assert(values.data_attribute_values[2].type == DataType::Timestamp);
+
+    // Direct FCDA reads return the leaf value, not a synthetic polling fallback.
+    native_req.invoke_id = 5;
+    native_req.payload = GetDataValuesRequest{
+        .ref = FcdFcdaRef{
+            .reference = "LD0/MMXU1.TotW.mag.f",
+            .fc = FunctionalConstraint::MX
+        },
+        .include_element_name = true
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    values_pdu = codec.decode(*wire_rsp);
+    const auto& leaf_values = std::get<GetDataValuesResponse>(values_pdu.payload);
+    assert(leaf_values.data_attribute_values.size() == 1);
+    assert(leaf_values.data_attribute_values[0].name == "f");
+    assert(leaf_values.data_attribute_values[0].type == DataType::Float32);
+    assert(std::get<float>(leaf_values.data_attribute_values[0].scalar) == 10.0F);
+
+    // P4 DataSet foundation: static directory and values preserve member order.
+    native_req.service = ServiceKind::GetLogicalNodeDirectory;
+    native_req.invoke_id = 6;
+    native_req.payload = GetLogicalNodeDirectoryRequest{
+        .logical_node_reference = "LD0/LLN0",
+        .acsi_class = AcsiClass::DataSet
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto dataset_list_pdu = codec.decode(*wire_rsp);
+    const auto& dataset_list =
+        std::get<GetLogicalNodeDirectoryResponse>(dataset_list_pdu.payload);
+    assert(dataset_list.instance_names.size() == 3);
+    assert(dataset_list.instance_names[0] == "DataSetMinMaxAvg");
+    assert(dataset_list.instance_names[2] == "DataSetActualValues");
+
+    native_req.service = ServiceKind::GetDataSetDirectory;
+    native_req.invoke_id = 7;
+    native_req.payload = GetDataSetDirectoryRequest{
+        .data_set_reference = "LD0/LLN0.DataSetActualValues"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto dataset_directory_pdu = codec.decode(*wire_rsp);
+    assert(dataset_directory_pdu.service == ServiceKind::GetDataSetDirectory);
+    const auto& dataset_directory =
+        std::get<GetDataSetDirectoryResponse>(dataset_directory_pdu.payload);
+    assert(dataset_directory.members.size() == 11);
+    assert(dataset_directory.members[0].reference == "LD0/MMXU1.TotW");
+    assert(dataset_directory.members[0].fc == FunctionalConstraint::MX);
+    assert(dataset_directory.members[10].reference == "LD0/MMXU1.A.phsC");
+
+    native_req.service = ServiceKind::GetDataSetValues;
+    native_req.invoke_id = 8;
+    native_req.payload = GetDataSetValuesRequest{
+        .data_set_reference = "LD0/LLN0.DataSetActualValues"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto dataset_values_pdu = codec.decode(*wire_rsp);
+    assert(dataset_values_pdu.service == ServiceKind::GetDataSetValues);
+    const auto& dataset_values =
+        std::get<GetDataSetValuesResponse>(dataset_values_pdu.payload);
+    assert(dataset_values.member_values.size() == 11);
+    assert(dataset_values.member_values[0].type == DataType::Structure);
+    assert(dataset_values.member_values[0].children.size() == 3);
+    assert(dataset_values.member_values[0].children[0].type == DataType::Structure);
+    assert(dataset_values.member_values[0].children[0].children.size() == 1);
+    assert(std::get<float>(
+        dataset_values.member_values[0].children[0].children[0].scalar) == 10.0F);
+
+    // P4 RCB foundation: discover BRCB/URCB and exercise typed get/set state.
+    native_req.service = ServiceKind::GetLogicalNodeDirectory;
+    native_req.invoke_id = 20;
+    native_req.payload = GetLogicalNodeDirectoryRequest{
+        .logical_node_reference = "LD0/LLN0",
+        .acsi_class = AcsiClass::Brcb
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto brcb_list_pdu = codec.decode(*wire_rsp);
+    const auto& brcb_list =
+        std::get<GetLogicalNodeDirectoryResponse>(brcb_list_pdu.payload);
+    assert(brcb_list.instance_names.size() == 1);
+    assert(brcb_list.instance_names[0] == "rcbMinMaxAvg");
+
+    native_req.invoke_id = 21;
+    native_req.payload = GetLogicalNodeDirectoryRequest{
+        .logical_node_reference = "LD0/LLN0",
+        .acsi_class = AcsiClass::Urcb
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto urcb_list_pdu = codec.decode(*wire_rsp);
+    const auto& urcb_list =
+        std::get<GetLogicalNodeDirectoryResponse>(urcb_list_pdu.payload);
+    assert(urcb_list.instance_names.size() == 2);
+    assert(urcb_list.instance_names[0] == "rcbSetpoints");
+    assert(urcb_list.instance_names[1] == "rcbActualValues");
+
+    native_req.service = ServiceKind::GetBrcbValues;
+    native_req.invoke_id = 22;
+    native_req.payload = GetReportControlValuesRequest{
+        .reference = "LD0/LLN0.rcbMinMaxAvg"
+    };
+    const auto get_brcb_wire = codec.encode(native_req);
+    const auto get_brcb_req_roundtrip = codec.decode(get_brcb_wire);
+    assert(get_brcb_req_roundtrip.service == ServiceKind::GetBrcbValues);
+    assert(std::get<GetReportControlValuesRequest>(
+        get_brcb_req_roundtrip.payload).reference ==
+        "LD0/LLN0.rcbMinMaxAvg");
+
+    wire_rsp = server.handle(get_brcb_wire);
+    assert(wire_rsp.has_value());
+    auto brcb_pdu = codec.decode(*wire_rsp);
+    assert(brcb_pdu.service == ServiceKind::GetBrcbValues);
+    const auto& brcb =
+        std::get<GetReportControlValuesResponse>(brcb_pdu.payload).state;
+    assert(brcb.buffered);
+    assert(brcb.report_id == "MinMaxAvg");
+    assert(brcb.data_set == "LD0/LLN0.DataSetMinMaxAvg");
+    assert(brcb.conf_rev == 1);
+    assert(brcb.integrity_period_ms == 2000);
+    assert(brcb.triggers.integrity);
+    assert(brcb.entry_id.size() == 8);
+    assert(brcb.time_of_entry.has_value());
+
+    native_req.service = ServiceKind::SetUrcbValues;
+    native_req.invoke_id = 23;
+    SetReportControlValuesRequest enable_urcb;
+    enable_urcb.reference = "LD0/LLN0.rcbActualValues";
+    enable_urcb.enabled = true;
+    enable_urcb.gi = true;
+    enable_urcb.buffer_time_ms = 250;
+    enable_urcb.triggers = TriggerOptions{
+        .data_change = true,
+        .quality_change = true,
+        .general_interrogation = true
+    };
+    native_req.payload = enable_urcb;
+
+    const auto set_urcb_wire = codec.encode(native_req);
+    const auto set_urcb_roundtrip = codec.decode(set_urcb_wire);
+    assert(set_urcb_roundtrip.service == ServiceKind::SetUrcbValues);
+    const auto& decoded_set_urcb =
+        std::get<SetReportControlValuesRequest>(set_urcb_roundtrip.payload);
+    assert(decoded_set_urcb.reference == "LD0/LLN0.rcbActualValues");
+    assert(decoded_set_urcb.enabled && *decoded_set_urcb.enabled);
+    assert(decoded_set_urcb.gi && *decoded_set_urcb.gi);
+    assert(decoded_set_urcb.buffer_time_ms &&
+        *decoded_set_urcb.buffer_time_ms == 250);
+    assert(decoded_set_urcb.triggers &&
+        decoded_set_urcb.triggers->general_interrogation);
+
+    wire_rsp = server.handle(set_urcb_wire);
+    assert(wire_rsp.has_value());
+    auto set_urcb_rsp_pdu = codec.decode(*wire_rsp);
+    assert(set_urcb_rsp_pdu.service == ServiceKind::SetUrcbValues);
+    assert(std::get<SetReportControlValuesResponse>(
+        set_urcb_rsp_pdu.payload).ok);
+
+    auto pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    assert(pending_reports[0].message_class == MessageClass::Unconfirmed);
+    assert(pending_reports[0].service == ServiceKind::Report);
+    const auto gi_report_wire = codec.encode(pending_reports[0]);
+    const auto gi_report_pdu = codec.decode(gi_report_wire);
+    assert(gi_report_pdu.message_class == MessageClass::Unconfirmed);
+    assert(gi_report_pdu.service == ServiceKind::Report);
+    const auto& gi_report = std::get<ReportPdu>(gi_report_pdu.payload);
+    assert(gi_report.report_id == "DataSetActualValues");
+    assert(gi_report.data_set &&
+        *gi_report.data_set == "LD0/LLN0.DataSetActualValues");
+    assert(gi_report.conf_rev && *gi_report.conf_rev == 1);
+    assert(gi_report.entries.size() == 11);
+    assert(gi_report.entries[0].data_reference == "LD0/MMXU1.TotW");
+    assert(gi_report.entries[0].reason.general_interrogation);
+    assert(!gi_report.entries[0].values.empty());
+
+    native_req.service = ServiceKind::GetUrcbValues;
+    native_req.invoke_id = 24;
+    native_req.payload = GetReportControlValuesRequest{
+        .reference = "LD0/LLN0.rcbActualValues"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto urcb_pdu = codec.decode(*wire_rsp);
+    const auto& urcb =
+        std::get<GetReportControlValuesResponse>(urcb_pdu.payload).state;
+    assert(!urcb.buffered);
+    assert(urcb.enabled);
+    assert(!urcb.gi);
+    assert(urcb.buffer_time_ms == 250);
+    assert(urcb.triggers.data_change);
+    assert(urcb.triggers.quality_change);
+    assert(urcb.triggers.general_interrogation);
+
+    // BufTm coalesces event triggers before an unconfirmed dchg report.
+    assert(server.set_float("LD0/MMXU1.TotW.mag.f", 77.25F));
+    assert(server.drain_unconfirmed().empty());
+    server.poll_scheduled_reports(
+        std::chrono::steady_clock::now() + std::chrono::milliseconds{500});
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    const auto dchg_wire = codec.encode(pending_reports[0]);
+    const auto dchg_pdu = codec.decode(dchg_wire);
+    assert(dchg_pdu.message_class == MessageClass::Unconfirmed);
+    const auto& dchg_report = std::get<ReportPdu>(dchg_pdu.payload);
+    assert(dchg_report.entries.size() == 1);
+    assert(dchg_report.entries[0].data_reference == "LD0/MMXU1.TotW");
+    assert(dchg_report.entries[0].reason.data_change);
+    assert(!dchg_report.entries[0].reason.general_interrogation);
+    assert(dchg_report.entries[0].values.size() == 1);
+    assert(dchg_report.entries[0].values[0].type == DataType::Structure);
+
+    // Quality mutations drive qchg independently from value changes.
+    Quality invalid_quality;
+    invalid_quality.validity = Validity::Invalid;
+    assert(server.set_quality("LD0/MMXU1.TotW.q", invalid_quality));
+    assert(server.drain_unconfirmed().empty());
+    server.poll_scheduled_reports(
+        std::chrono::steady_clock::now() + std::chrono::milliseconds{500});
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    const auto qchg_pdu = codec.decode(codec.encode(pending_reports[0]));
+    const auto& qchg_report = std::get<ReportPdu>(qchg_pdu.payload);
+    assert(qchg_report.entries.size() == 1);
+    assert(qchg_report.entries[0].data_reference == "LD0/MMXU1.TotW");
+    assert(qchg_report.entries[0].reason.quality_change);
+    assert(!qchg_report.entries[0].reason.data_change);
+
+    // Configuration writes while RptEna remains true are rejected.
+    native_req.service = ServiceKind::SetUrcbValues;
+    native_req.invoke_id = 25;
+    SetReportControlValuesRequest illegal_live_write;
+    illegal_live_write.reference = "LD0/LLN0.rcbActualValues";
+    illegal_live_write.integrity_period_ms = 5000;
+    native_req.payload = illegal_live_write;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto live_write_error = codec.decode(*wire_rsp);
+    assert(live_write_error.service == ServiceKind::ServiceError);
+    assert(std::get<ServiceError>(live_write_error.payload).status ==
+        ServiceStatus::AccessNotAllowedInCurrentState);
+
+    // A single request may disable the RCB and then apply configuration safely.
+    native_req.invoke_id = 26;
+    SetReportControlValuesRequest disable_and_configure;
+    disable_and_configure.reference = "LD0/LLN0.rcbActualValues";
+    disable_and_configure.enabled = false;
+    disable_and_configure.buffer_time_ms = 0;
+    disable_and_configure.integrity_period_ms = 5000;
+    disable_and_configure.gi = false;
+    disable_and_configure.triggers = TriggerOptions{
+        .data_change = true,
+        .quality_change = true,
+        .data_update = true,
+        .general_interrogation = true
+    };
+    native_req.payload = disable_and_configure;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto disable_rsp = codec.decode(*wire_rsp);
+    assert(disable_rsp.service == ServiceKind::SetUrcbValues);
+
+    native_req.service = ServiceKind::GetUrcbValues;
+    native_req.invoke_id = 27;
+    native_req.payload = GetReportControlValuesRequest{
+        .reference = "LD0/LLN0.rcbActualValues"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    urcb_pdu = codec.decode(*wire_rsp);
+    const auto& urcb_after_disable =
+        std::get<GetReportControlValuesResponse>(urcb_pdu.payload).state;
+    assert(!urcb_after_disable.enabled);
+    assert(!urcb_after_disable.gi);
+    assert(urcb_after_disable.integrity_period_ms == 5000);
+    assert(urcb_after_disable.buffer_time_ms == 0);
+    assert(urcb_after_disable.triggers.data_update);
+
+    native_req.service = ServiceKind::SetUrcbValues;
+    native_req.invoke_id = 29;
+    SetReportControlValuesRequest reenable_urcb;
+    reenable_urcb.reference = "LD0/LLN0.rcbActualValues";
+    reenable_urcb.enabled = true;
+    native_req.payload = reenable_urcb;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    assert(codec.decode(*wire_rsp).service == ServiceKind::SetUrcbValues);
+
+    // Writing the same value is a data update, not a data change.
+    assert(server.set_float("LD0/MMXU1.TotW.mag.f", 77.25F));
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    const auto dupd_pdu = codec.decode(codec.encode(pending_reports[0]));
+    const auto& dupd_report = std::get<ReportPdu>(dupd_pdu.payload);
+    assert(dupd_report.entries.size() == 1);
+    assert(dupd_report.entries[0].reason.data_update);
+    assert(!dupd_report.entries[0].reason.data_change);
+
+    // Service family must match the canonical RCB class.
+    native_req.service = ServiceKind::GetBrcbValues;
+    native_req.invoke_id = 28;
+    native_req.payload = GetReportControlValuesRequest{
+        .reference = "LD0/LLN0.rcbActualValues"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto class_error = codec.decode(*wire_rsp);
+    assert(class_error.service == ServiceKind::ServiceError);
+    assert(std::get<ServiceError>(class_error.payload).status ==
+        ServiceStatus::ClassNotSupported);
+
+    // BRCB integrity scheduling keeps sequence continuity and a replay journal.
+    native_req.service = ServiceKind::SetBrcbValues;
+    native_req.invoke_id = 30;
+    SetReportControlValuesRequest enable_brcb;
+    enable_brcb.reference = "LD0/LLN0.rcbMinMaxAvg";
+    enable_brcb.enabled = true;
+    enable_brcb.buffer_time_ms = 0;
+    enable_brcb.integrity_period_ms = 100;
+    enable_brcb.triggers = TriggerOptions{.integrity = true};
+    enable_brcb.optional_fields = ReportOptionalFields{
+        .sequence_number = true,
+        .timestamp = true,
+        .data_set = true,
+        .buffer_overflow = true,
+        .config_revision = true,
+        .entry_id = true,
+        .data_reference = true,
+        .reason_code = true
+    };
+    native_req.payload = enable_brcb;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    assert(codec.decode(*wire_rsp).service == ServiceKind::SetBrcbValues);
+    assert(server.drain_unconfirmed().empty());
+
+    const auto t0 = std::chrono::steady_clock::now();
+    server.poll_scheduled_reports(t0);
+    server.poll_scheduled_reports(t0 + std::chrono::milliseconds{101});
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    auto integrity1 = std::get<ReportPdu>(
+        codec.decode(codec.encode(pending_reports[0])).payload);
+    assert(integrity1.sequence_number && *integrity1.sequence_number == 0);
+    assert(integrity1.conf_rev && *integrity1.conf_rev == 1);
+    assert(integrity1.entries.size() == 3);
+    assert(integrity1.entries[0].reason.integrity);
+    assert(integrity1.entry_id.size() == 8);
+    assert(server.buffered_report_count("LD0/LLN0.rcbMinMaxAvg") == 1);
+
+    server.poll_scheduled_reports(t0 + std::chrono::milliseconds{201});
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    auto integrity2 = std::get<ReportPdu>(
+        codec.decode(codec.encode(pending_reports[0])).payload);
+    assert(integrity2.sequence_number && *integrity2.sequence_number == 1);
+    assert(integrity2.entry_id != integrity1.entry_id);
+    assert(server.buffered_report_count("LD0/LLN0.rcbMinMaxAvg") == 2);
+
+    // EntryID is a real BER cursor and replays journal entries after the cursor.
+    native_req.invoke_id = 31;
+    SetReportControlValuesRequest replay_brcb;
+    replay_brcb.reference = "LD0/LLN0.rcbMinMaxAvg";
+    replay_brcb.entry_id = integrity1.entry_id;
+    native_req.payload = replay_brcb;
+    const auto replay_wire = codec.encode(native_req);
+    const auto replay_roundtrip = codec.decode(replay_wire);
+    const auto& replay_req =
+        std::get<SetReportControlValuesRequest>(replay_roundtrip.payload);
+    assert(replay_req.entry_id && *replay_req.entry_id == integrity1.entry_id);
+    wire_rsp = server.handle(replay_wire);
+    assert(wire_rsp.has_value());
+    pending_reports = server.drain_unconfirmed();
+    assert(pending_reports.size() == 1);
+    const auto replayed = std::get<ReportPdu>(pending_reports[0].payload);
+    assert(replayed.entry_id == integrity2.entry_id);
+
+    native_req.invoke_id = 32;
+    SetReportControlValuesRequest purge_brcb;
+    purge_brcb.reference = "LD0/LLN0.rcbMinMaxAvg";
+    purge_brcb.purge_buffer = true;
+    native_req.payload = purge_brcb;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    assert(server.buffered_report_count("LD0/LLN0.rcbMinMaxAvg") == 0);
+
+    // DataSet changes advance ConfRev; a stale BRCB cursor is rejected.
+    native_req.invoke_id = 33;
+    SetReportControlValuesRequest reconfigure_brcb;
+    reconfigure_brcb.reference = "LD0/LLN0.rcbMinMaxAvg";
+    reconfigure_brcb.enabled = false;
+    reconfigure_brcb.data_set = "LD0/LLN0.DataSetSetpoints";
+    native_req.payload = reconfigure_brcb;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+
+    native_req.service = ServiceKind::GetBrcbValues;
+    native_req.invoke_id = 34;
+    native_req.payload = GetReportControlValuesRequest{
+        .reference = "LD0/LLN0.rcbMinMaxAvg"
+    };
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto reconfigured_brcb = codec.decode(*wire_rsp);
+    assert(std::get<GetReportControlValuesResponse>(
+        reconfigured_brcb.payload).state.conf_rev == 2);
+
+    native_req.service = ServiceKind::SetBrcbValues;
+    native_req.invoke_id = 35;
+    SetReportControlValuesRequest stale_cursor;
+    stale_cursor.reference = "LD0/LLN0.rcbMinMaxAvg";
+    stale_cursor.entry_id = Bytes(8, 0xff);
+    native_req.payload = stale_cursor;
+    wire_rsp = server.handle(codec.encode(native_req));
+    assert(wire_rsp.has_value());
+    auto stale_error = codec.decode(*wire_rsp);
+    assert(stale_error.service == ServiceKind::ServiceError);
+    assert(std::get<ServiceError>(stale_error.payload).status ==
+        ServiceStatus::ParameterValueInconsistent);
+
+    // A bounded BRCB journal drops the oldest record and marks overflow.
+    {
+        ServerConfig tiny_config;
+        tiny_config.buffered_report_capacity = 2;
+        ServerCore tiny{IedModel::make_ft20_reference_model(), tiny_config};
+        auto assoc_rsp = tiny.handle(codec.encode(assoc));
+        assert(assoc_rsp.has_value());
+
+        DmsPdu rcb_req;
+        rcb_req.message_class = MessageClass::Request;
+        rcb_req.service = ServiceKind::SetBrcbValues;
+        rcb_req.associate_id = "id_cp1";
+        rcb_req.invoke_id = 1;
+        SetReportControlValuesRequest cfg;
+        cfg.reference = "LD0/LLN0.rcbMinMaxAvg";
+        cfg.enabled = true;
+        cfg.integrity_period_ms = 10;
+        cfg.triggers = TriggerOptions{.integrity = true};
+        cfg.optional_fields = ReportOptionalFields{
+            .sequence_number = true,
+            .timestamp = true,
+            .data_set = true,
+            .buffer_overflow = true,
+            .config_revision = true,
+            .entry_id = true,
+            .reason_code = true
+        };
+        rcb_req.payload = cfg;
+        assert(tiny.handle(codec.encode(rcb_req)).has_value());
+
+        const auto base = std::chrono::steady_clock::now();
+        tiny.poll_scheduled_reports(base);
+        tiny.poll_scheduled_reports(base + std::chrono::milliseconds{11});
+        auto first = tiny.drain_unconfirmed();
+        assert(first.size() == 1);
+
+        tiny.poll_scheduled_reports(base + std::chrono::milliseconds{21});
+        auto second = tiny.drain_unconfirmed();
+        assert(second.size() == 1);
+
+        tiny.poll_scheduled_reports(base + std::chrono::milliseconds{31});
+        auto third = tiny.drain_unconfirmed();
+        assert(third.size() == 1);
+        assert(tiny.buffered_report_count("LD0/LLN0.rcbMinMaxAvg") == 2);
+        const auto& overflow_report = std::get<ReportPdu>(third[0].payload);
+        assert(overflow_report.buffer_overflow);
+        assert(overflow_report.sequence_number &&
+            *overflow_report.sequence_number == 2);
+    }
+
+    // Buffered history survives association release and can be replayed
+    // after a new association using the last acknowledged EntryID.
+    {
+        ServerCore reconnect{IedModel::make_ft20_reference_model()};
+        assert(reconnect.handle(codec.encode(assoc)).has_value());
+
+        DmsPdu cfg_pdu;
+        cfg_pdu.message_class = MessageClass::Request;
+        cfg_pdu.service = ServiceKind::SetBrcbValues;
+        cfg_pdu.associate_id = "id_cp1";
+        cfg_pdu.invoke_id = 1;
+
+        SetReportControlValuesRequest cfg;
+        cfg.reference = "LD0/LLN0.rcbMinMaxAvg";
+        cfg.enabled = true;
+        cfg.integrity_period_ms = 10;
+        cfg.triggers = TriggerOptions{.integrity = true};
+        cfg.optional_fields = ReportOptionalFields{
+            .sequence_number = true,
+            .timestamp = true,
+            .data_set = true,
+            .buffer_overflow = true,
+            .config_revision = true,
+            .entry_id = true,
+            .reason_code = true
+        };
+        cfg_pdu.payload = cfg;
+        assert(reconnect.handle(codec.encode(cfg_pdu)).has_value());
+
+        const auto base = std::chrono::steady_clock::now();
+        reconnect.poll_scheduled_reports(base);
+        reconnect.poll_scheduled_reports(
+            base + std::chrono::milliseconds{11});
+        auto before_release = reconnect.drain_unconfirmed();
+        assert(before_release.size() == 1);
+        const auto first_id =
+            std::get<ReportPdu>(before_release[0].payload).entry_id;
+
+        reconnect.poll_scheduled_reports(
+            base + std::chrono::milliseconds{21});
+        before_release = reconnect.drain_unconfirmed();
+        assert(before_release.size() == 1);
+        const auto second_id =
+            std::get<ReportPdu>(before_release[0].payload).entry_id;
+
+        DmsPdu rel;
+        rel.message_class = MessageClass::Association;
+        rel.service = ServiceKind::Release;
+        rel.associate_id = "id_cp1";
+        rel.invoke_id = 90;
+        assert(reconnect.handle(codec.encode(rel)).has_value());
+        assert(!reconnect.associated());
+        assert(reconnect.buffered_report_count(
+            "LD0/LLN0.rcbMinMaxAvg") == 2);
+
+        assert(reconnect.handle(codec.encode(assoc)).has_value());
+        cfg_pdu.invoke_id = 2;
+        cfg.enabled = true;
+        cfg.entry_id = first_id;
+        cfg_pdu.payload = cfg;
+        assert(reconnect.handle(codec.encode(cfg_pdu)).has_value());
+
+        auto replayed_after_reconnect = reconnect.drain_unconfirmed();
+        assert(replayed_after_reconnect.size() == 1);
+        const auto& replayed_report =
+            std::get<ReportPdu>(replayed_after_reconnect[0].payload);
+        assert(replayed_report.entry_id == second_id);
+    }
+
+    // Canonical model exposes nested IEC attributes without dynamic dictionaries.
+    {
+        auto model = IedModel::make_ft20_reference_model();
+        const auto* totw = model.find_data_object("LD0/MMXU1.TotW");
+        assert(totw && totw->cdc == "MV");
+
+        const auto* mag_f = model.find_data_attribute("LD0/MMXU1.TotW.mag.f");
+        assert(mag_f && mag_f->fc == FunctionalConstraint::MX);
+        assert(mag_f->type == DataType::Float32);
+        assert(std::get<float>(mag_f->value) == 10.0F);
+
+        assert(model.set_float("LD0/MMXU1.TotW.mag.f", 42.5F));
+        mag_f = model.find_data_attribute("LD0/MMXU1.TotW.mag.f");
+        assert(mag_f && std::get<float>(mag_f->value) == 42.5F);
+
+        const auto* phase = model.find_data_object("LD0/MMXU1.PhV.phsA");
+        assert(phase && phase->cdc == "CMV");
+        const auto* phase_mag = model.find_data_attribute("LD0/MMXU1.PhV.phsA.cVal.mag.f");
+        assert(phase_mag && phase_mag->type == DataType::Float32);
+    }
+
+    // Association lifecycle is explicit and leaves the server disconnected.
+    DmsPdu release_req;
+    release_req.message_class = MessageClass::Association;
+    release_req.service = ServiceKind::Release;
+    release_req.associate_id = "id_cp1";
+    release_req.invoke_id = 9;
+
+    const auto release_wire = codec.encode(release_req);
+    const auto release_decoded = codec.decode(release_wire);
+    assert(release_decoded.service == ServiceKind::Release);
+    assert(release_decoded.invoke_id && *release_decoded.invoke_id == 9);
+    assert(release_decoded.associate_id == "id_cp1");
+
+    wire_rsp = server.handle(release_wire);
+    assert(wire_rsp.has_value());
+    const auto release_rsp = codec.decode(*wire_rsp);
+    assert(release_rsp.service == ServiceKind::Release);
+    assert(release_rsp.invoke_id && *release_rsp.invoke_id == 9);
+    assert(!server.associated());
+
+    // Re-associate and test abort independently.
+    wire_rsp = server.handle(codec.encode(assoc));
+    assert(wire_rsp.has_value() && server.associated());
+
+    DmsPdu abort_req;
+    abort_req.message_class = MessageClass::Association;
+    abort_req.service = ServiceKind::Abort;
+    abort_req.associate_id = "id_cp1";
+    abort_req.invoke_id = 10;
+
+    wire_rsp = server.handle(codec.encode(abort_req));
+    assert(wire_rsp.has_value());
+    const auto abort_rsp = codec.decode(*wire_rsp);
+    assert(abort_rsp.service == ServiceKind::Abort);
+    assert(abort_rsp.invoke_id && *abort_rsp.invoke_id == 10);
+    assert(!server.associated());
+
+    // Hardening: reject indefinite length and truncation.
+    bool rejected = false;
+    try { codec.decode(hex("a0800000")); } catch (const ber::Error&) { rejected = true; }
+    assert(rejected);
+
+    rejected = false;
+    try { codec.decode(hex("a2053003a0")); } catch (const ber::Error&) { rejected = true; }
+    assert(rejected);
+
+    std::cout << "protocol tests passed\n";
+    return 0;
+}

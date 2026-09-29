@@ -1,0 +1,85 @@
+#pragma once
+
+#include "ar61850/dms/protocol.hpp"
+
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace ar61850::dms {
+
+struct DataAttributeNode {
+    std::string name;
+    FunctionalConstraint fc{FunctionalConstraint::ST};
+    DataType type{DataType::Unknown};
+    DataScalar value{};
+    std::vector<DataAttributeNode> children;
+
+    bool is_structure() const noexcept { return type == DataType::Structure; }
+};
+
+struct DataObjectNode {
+    std::string name;
+    std::string cdc;
+    std::vector<DataObjectNode> children;
+    std::vector<DataAttributeNode> attributes;
+};
+
+struct DataSetMemberModel {
+    std::string reference;
+    FunctionalConstraint fc{FunctionalConstraint::ST};
+};
+
+struct DataSetModel {
+    std::string name;
+    std::string reference;
+    std::vector<DataSetMemberModel> members;
+    bool deletable{false};
+};
+
+struct LogicalNodeModel {
+    std::string name;
+    std::vector<DataObjectNode> data_objects;
+    std::vector<DataSetModel> data_sets;
+    std::vector<ReportControlState> report_controls;
+};
+
+struct LogicalDeviceModel {
+    std::string name;
+    std::vector<LogicalNodeModel> logical_nodes;
+};
+
+class IedModel {
+public:
+    explicit IedModel(std::string ied_name = "IED1");
+
+    const std::string& ied_name() const noexcept { return ied_name_; }
+    std::vector<LogicalDeviceModel>& logical_devices() noexcept { return logical_devices_; }
+    const std::vector<LogicalDeviceModel>& logical_devices() const noexcept { return logical_devices_; }
+
+    const LogicalDeviceModel* find_logical_device(std::string_view name) const noexcept;
+    const LogicalNodeModel* find_logical_node(std::string_view reference) const noexcept;
+    const DataObjectNode* find_data_object(std::string_view reference) const noexcept;
+    const DataAttributeNode* find_data_attribute(std::string_view reference) const noexcept;
+    DataAttributeNode* find_data_attribute(std::string_view reference) noexcept;
+    const DataSetModel* find_data_set(std::string_view reference) const noexcept;
+    const ReportControlState* find_report_control(
+        std::string_view reference) const noexcept;
+    ReportControlState* find_report_control(
+        std::string_view reference) noexcept;
+
+    bool set_float(std::string_view reference, float value) noexcept;
+    bool set_float_batch(
+        const std::vector<std::pair<std::string, float>>& updates) noexcept;
+    bool set_quality(std::string_view reference, Quality quality) noexcept;
+
+    static IedModel make_ft20_reference_model();
+
+private:
+    std::string ied_name_;
+    std::vector<LogicalDeviceModel> logical_devices_;
+};
+
+} // namespace ar61850::dms
