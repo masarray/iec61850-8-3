@@ -34,7 +34,7 @@ std::size_t Worker::pending() const noexcept {
 }
 
 void Worker::run(std::stop_token token) {
-    while (!token.stop_requested()) {
+    for (;;) {
         Task task;
         {
             std::unique_lock lock(mutex_);
