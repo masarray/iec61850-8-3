@@ -1,5 +1,6 @@
 #include "ar61850/dms/server_runtime.hpp"
 
+#include <algorithm>
 #include <exception>
 #include <future>
 #include <stdexcept>
