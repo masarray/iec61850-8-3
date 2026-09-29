@@ -84,11 +84,11 @@ All implementation work is governed by:
 
 - [AGENTS.md](AGENTS.md) — mandatory repository-wide coding/architecture rules;
 - [Engineering Standard](docs/ENGINEERING_STANDARD.md) — layering, ownership, hot-path, backpressure and review rules;
-- [Scalability Plan](docs/SCALABILITY.md) — million-point architecture and benchmark acceptance gates;
+- [Scalability Plan](docs/SCALABILITY.md) — high-cardinality architecture, responsiveness and regression guidance;
 - [Current Scalability Audit](docs/SCALABILITY_AUDIT.md) — concrete P0–P4 scale blockers and the immediate P4S refactor gate;
 - [Implementation Phases](docs/IMPLEMENTATION_PHASES.md) — phase-by-phase completion plan through stable 1.0.
 
-The long-term scale target is at least **1,000,000 leaf signals in one loaded model**. This is a design target until the P9 benchmark gate is completed; the project will not claim validated million-point capability before measured evidence exists.
+“Millions of data points” is treated as a shorthand for **high-cardinality, responsive engineering workloads**, not as a fixed certification number. The codebase is required to use indexed access, bounded resources, backpressure, incremental APIs and event-driven fanout so large models do not make the engine or browser freeze. Quantitative claims are only made when a future release chooses to publish measured numbers.
 
 See also:
 
