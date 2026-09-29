@@ -61,6 +61,7 @@ int main() {
     assert(health->body.find("\"runtimeRunning\":true") != std::string::npos);
     assert(health->body.find("\"transportActive\":true") != std::string::npos);
     assert(health->body.find("\"transportConnected\":true") != std::string::npos);
+    assert(health->body.find("\"reportCount\":0") != std::string::npos);
 
     auto page = client.get(control.base_uri() + "/", args);
     assert(page);
@@ -102,6 +103,7 @@ int main() {
     assert(model->body.find("LD0/LLN0.rcbActualValues") != std::string::npos);
     assert(model->body.find("\"kind\":\"URCB\"") != std::string::npos);
     assert(model->body.find("\"dchg\":true") != std::string::npos);
+    assert(model->body.find("\"reportControls\"") != std::string::npos);
 
     auto mutate = client.post(
         control.base_uri() +
@@ -112,11 +114,29 @@ int main() {
     assert(mutate->statusCode == 200);
     assert(mutate->body.find("\"ok\":true") != std::string::npos);
 
+    auto quality = client.post(
+        control.base_uri() +
+            "/api/signals/quality?ref=LD0%2FMMXU1.TotW.q&validity=invalid&source=process",
+        std::string{},
+        args);
+    assert(quality);
+    assert(quality->statusCode == 200);
+    assert(quality->body.find("\"ok\":true") != std::string::npos);
+
+    auto reports = client.get(
+        control.base_uri() + "/api/reports?after=0&limit=32", args);
+    assert(reports);
+    assert(reports->statusCode == 200);
+    assert(!reports->body.empty() && reports->body.front() == '[');
+
     const auto snapshot = runtime.model_snapshot();
     assert(snapshot);
     const auto* attr = snapshot->find_data_attribute("LD0/MMXU1.TotW.mag.f");
     assert(attr);
     assert(std::get<float>(attr->value) == 42.5F);
+    const auto* q = snapshot->find_data_attribute("LD0/MMXU1.TotW.q");
+    assert(q);
+    assert(std::get<Quality>(q->value).validity == Validity::Invalid);
 
     auto scenario = client.post(
         control.base_uri() + "/api/scenarios/load-step",
@@ -136,6 +156,13 @@ int main() {
     assert(traces);
     assert(traces->statusCode == 200);
     assert(!traces->body.empty() && traces->body.front() == '[');
+
+    auto clear_reports = client.post(
+        control.base_uri() + "/api/reports/clear",
+        std::string{},
+        args);
+    assert(clear_reports);
+    assert(clear_reports->statusCode == 200);
 
     auto clear = client.post(
         control.base_uri() + "/api/traces/clear",
