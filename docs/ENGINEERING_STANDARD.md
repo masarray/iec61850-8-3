@@ -57,7 +57,7 @@ The current typed tree is intentionally clear and strongly typed.
 
 ### Scale phase
 
-For million-point workloads, migrate without changing external semantics toward:
+For high-cardinality workloads, migrate without changing external semantics toward:
 
 - immutable topology after model build;
 - compact stable IDs: `LdId`, `LnId`, `DoId`, `DaId`, `DataSetId`, `RcbId`;
@@ -121,7 +121,7 @@ reverse subscription index
    +--> RcbId B
 ```
 
-Do not iterate over every RCB for each signal update when model size becomes material.
+Do not iterate over every RCB for each signal update when model size becomes material; resolve to interested RCBs through indexes.
 
 ### Encode
 
@@ -188,7 +188,7 @@ Large discovery/model responses require:
 - cancellation;
 - no construction of an enormous temporary JSON string for normal browsing.
 
-The browser tree will move to lazy expansion for million-point models.
+The browser tree must use lazy/paged expansion for large models rather than whole-model serialization.
 
 ## 10. Observability
 
@@ -254,9 +254,9 @@ Rules:
 
 ## 14. Benchmark-driven optimization
 
-Performance is a release gate, not a final cleanup task.
+Performance architecture is a release-quality concern, not a final cleanup task.
 
-Required benchmark families are defined in [SCALABILITY.md](SCALABILITY.md).
+Representative benchmark/regression families are defined in [SCALABILITY.md](SCALABILITY.md). They are used to detect architectural regressions; no arbitrary fixed signal count is required unless a future release makes a numeric capability claim.
 
 A performance-sensitive PR must not degrade an established benchmark materially without explanation and an explicit tradeoff.
 
