@@ -141,3 +141,57 @@ Netbeheer Nederland's public implementation is treated as:
 - an optional external interoperability endpoint.
 
 It is not linked, embedded, spawned, downloaded or required by the native runtime.
+
+
+## Scale architecture
+
+The correctness-oriented canonical tree remains the semantic source, but million-point operation requires data-oriented indexes around it and eventually a compact indexed storage representation.
+
+Target runtime path:
+
+```text
+external reference
+      |
+reference index
+      v
+stable SignalId
+      |
+mutable value store
+      |
+reverse subscription index
+      v
+interested RcbIds only
+      |
+bounded BufTm accumulators / scheduler
+      |
+report builder from DataSet member IDs
+      |
+bounded egress + optional BRCB journal
+```
+
+The high-cardinality implementation must avoid:
+
+- full-model scans for ordinary point reads/updates;
+- full-RCB scans after every point mutation;
+- one timer/thread per RCB;
+- repeated reference-string parsing in resolved hot paths;
+- whole-model JSON serialization for ordinary browser navigation.
+
+Model topology should become mostly immutable after finalization. Mutable values/report state are stored separately so updates do not copy or lock large metadata structures.
+
+The browser/control plane becomes cursor/paged/lazy at large scale. A slow browser remains outside the protocol critical path.
+
+See [SCALABILITY.md](SCALABILITY.md) for benchmark gates and [../AGENTS.md](../AGENTS.md) for mandatory implementation rules.
+
+## Engineering change policy
+
+Early phases are not permission to create throwaway production paths.
+
+When a temporary/simple test implementation is needed:
+
+1. keep it behind a test/example boundary;
+2. label it explicitly;
+3. do not wire production services through it;
+4. preserve the stable-ID/index/backpressure migration path.
+
+Any change to concurrency, indexing, buffering or ownership must document its complexity and overload behavior.
