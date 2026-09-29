@@ -73,6 +73,7 @@ public:
     bool set_float(std::string_view reference, float value) noexcept;
     bool set_float_batch(
         const std::vector<std::pair<std::string, float>>& updates) noexcept;
+    bool set_quality(std::string_view reference, Quality quality) noexcept;
 
     static IedModel make_ft20_reference_model();
 
