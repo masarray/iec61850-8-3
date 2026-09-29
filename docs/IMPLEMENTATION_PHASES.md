@@ -340,7 +340,7 @@ Work:
 - documented unsupported optional services;
 - API compatibility policy;
 - deprecation process;
-- performance certification report;
+- performance/scalability engineering report;
 - interoperability report;
 - security report.
 
