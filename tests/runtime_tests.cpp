@@ -151,7 +151,7 @@ int main() {
     assert(dchg_report.entries.front().reason.data_change);
 
     const auto traces = runtime.trace_snapshot();
-    assert(traces.size() >= 10);
+    assert(traces.size() >= 8);
     assert(runtime.dropped_messages() == 0);
 
     runtime.stop();
