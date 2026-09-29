@@ -264,6 +264,45 @@ void append_data_sets_json(
     out << ']';
 }
 
+
+void append_report_controls_json(
+    std::ostringstream& out,
+    const std::vector<ReportControlState>& controls) {
+    out << '[';
+    bool first = true;
+    for (const auto& rcb : controls) {
+        if (!first) out << ',';
+        first = false;
+        out << "{\"ref\":\"" << json_escape(rcb.reference.value)
+            << "\",\"rptId\":\"" << json_escape(rcb.report_id)
+            << "\",\"kind\":\"" << (rcb.buffered ? "BRCB" : "URCB")
+            << "\",\"enabled\":" << (rcb.enabled ? "true" : "false")
+            << ",\"dataSet\":\"" << json_escape(rcb.data_set)
+            << "\",\"confRev\":" << rcb.conf_rev
+            << ",\"bufTmMs\":" << rcb.buffer_time_ms
+            << ",\"intgPdMs\":" << rcb.integrity_period_ms
+            << ",\"sqNum\":" << rcb.sequence_number
+            << ",\"gi\":" << (rcb.gi ? "true" : "false")
+            << ",\"trgOps\":{"
+            << "\"dchg\":" << (rcb.triggers.data_change ? "true" : "false")
+            << ",\"qchg\":" << (rcb.triggers.quality_change ? "true" : "false")
+            << ",\"dupd\":" << (rcb.triggers.data_update ? "true" : "false")
+            << ",\"integrity\":" << (rcb.triggers.integrity ? "true" : "false")
+            << ",\"gi\":" << (rcb.triggers.general_interrogation ? "true" : "false")
+            << "},\"optFlds\":{"
+            << "\"seqNum\":" << (rcb.optional_fields.sequence_number ? "true" : "false")
+            << ",\"timeStamp\":" << (rcb.optional_fields.timestamp ? "true" : "false")
+            << ",\"dataSet\":" << (rcb.optional_fields.data_set ? "true" : "false")
+            << ",\"bufOvfl\":" << (rcb.optional_fields.buffer_overflow ? "true" : "false")
+            << ",\"confRev\":" << (rcb.optional_fields.config_revision ? "true" : "false")
+            << ",\"entryId\":" << (rcb.optional_fields.entry_id ? "true" : "false")
+            << ",\"dataRef\":" << (rcb.optional_fields.data_reference ? "true" : "false")
+            << ",\"reasonCode\":" << (rcb.optional_fields.reason_code ? "true" : "false")
+            << "}}";
+    }
+    out << ']';
+}
+
 std::string model_json(const IedModel& model) {
     std::ostringstream out;
     out << "{\"ied\":\"" << json_escape(model.ied_name()) << "\",\"logicalDevices\":[";
@@ -283,6 +322,8 @@ std::string model_json(const IedModel& model) {
             append_objects_json(out, ln.data_objects, ln_ref);
             out << ",\"dataSets\":";
             append_data_sets_json(out, ln.data_sets);
+            out << ",\"reportControls\":";
+            append_report_controls_json(out, ln.report_controls);
             out << '}';
         }
         out << "]}";
